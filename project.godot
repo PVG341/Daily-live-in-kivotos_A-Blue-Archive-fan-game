@@ -17,6 +17,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 EventBus="*res://scripts/core/EventBus.gd"
+DayCycleManager="*res://scripts/core/DayCycleManager.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
