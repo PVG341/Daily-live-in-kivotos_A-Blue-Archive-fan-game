@@ -31,6 +31,8 @@ func _ready() -> void:
 func toggle() -> bool:
 	is_open = not is_open
 	visible = is_open
+	if is_open and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	phone_toggled.emit(is_open)
 	return is_open
 

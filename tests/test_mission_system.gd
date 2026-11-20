@@ -160,7 +160,11 @@ func _run_tests() -> void:
 
 	mm.record_objective_progress("CLEAR_DUNGEON", "abydos_bank_robbery", 1)
 	check(mm.is_quest_ready_to_complete("shiroko_bond_5") == true, "Quest must be ready after recording matching objective progress")
-	check(mm.complete_quest("shiroko_bond_5", tracker) == true, "complete_quest must succeed once objective is met")
+	var prog_script: GDScript = load("res://scripts/core/ProgressionManager.gd")
+	var prog: Node = prog_script.new()
+	check(mm.complete_quest("shiroko_bond_5", tracker, prog) == true, "complete_quest must succeed once objective is met")
+	check(prog.get_unlocked_roguelike_cards().has("card_shiroko_drone"), "complete_quest with progression_manager must unlock quest's roguelike card")
+	prog.free()
 	check(mm.is_quest_completed("shiroko_bond_5") == true, "Quest must be marked completed")
 	check(mm.is_quest_ready_to_complete("shiroko_bond_5") == false, "Completed quest must no longer be ready to complete")
 	check(mm.complete_quest("shiroko_bond_5", tracker) == false, "Completing an already completed quest must return false")

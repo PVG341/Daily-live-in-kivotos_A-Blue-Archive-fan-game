@@ -11,6 +11,7 @@ var event_bus: Node = null
 
 func _ready() -> void:
 	_connect_event_bus()
+	_connect_save_manager()
 	_sync_initial_state()
 	_refresh_labels()
 
@@ -61,6 +62,17 @@ func _connect_event_bus() -> void:
 		bus.ap_changed.connect(update_ap)
 	if bus.has_signal("day_advanced") and not bus.day_advanced.is_connected(update_day):
 		bus.day_advanced.connect(update_day)
+
+func _connect_save_manager() -> void:
+	if not is_inside_tree():
+		return
+	var sm := get_node_or_null("/root/SaveManager")
+	if sm != null and sm.has_signal("game_loaded") and not sm.game_loaded.is_connected(_on_game_loaded):
+		sm.game_loaded.connect(_on_game_loaded)
+
+func _on_game_loaded(_slot: int) -> void:
+	_sync_initial_state()
+	_refresh_labels()
 
 func _get_event_bus() -> Node:
 	if event_bus != null:

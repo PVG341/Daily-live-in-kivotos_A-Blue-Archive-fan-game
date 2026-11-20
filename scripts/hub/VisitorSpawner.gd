@@ -14,7 +14,7 @@ func sync_from_settings(settings_manager: Object) -> void:
 		max_active_students = maxi(1, int(settings_manager.max_active_students))
 
 ## Splits desired daily visitors into FPS-capped active_spawns, overflow_queue, and bonus_gift_multiplier.
-func calculate_daily_visitors(unlocked_students: Array[String], comfort_score: int) -> Dictionary:
+func calculate_daily_visitors(unlocked_students: Array[String], comfort_score: int, day_offset: int = 0) -> Dictionary:
 	var active_spawns: Array[String] = []
 	var overflow_queue: Array[String] = []
 
@@ -25,16 +25,18 @@ func calculate_daily_visitors(unlocked_students: Array[String], comfort_score: i
 			"bonus_gift_multiplier": 1.0,
 		}
 
+	var count: int = unlocked_students.size()
+	var start_idx: int = posmod(day_offset, count) if day_offset != 0 else 0
 	var desired_count: int = clampi(
 		1 + int(maxi(0, comfort_score) / COMFORT_PER_VISITOR),
 		1,
-		unlocked_students.size()
+		count
 	)
 	var cap: int = maxi(1, max_active_students)
 	var active_count: int = mini(desired_count, cap)
 
 	for i in range(desired_count):
-		var student_id: String = unlocked_students[i]
+		var student_id: String = unlocked_students[(start_idx + i) % count]
 		if i < active_count:
 			active_spawns.append(student_id)
 		else:

@@ -20,12 +20,60 @@ func register_card(card: Dictionary) -> void:
 	if not card.has("id"):
 		return
 	var card_id: String = str(card["id"])
-	if card_id.is_empty():
+	if card_id.is_empty() or _has_card_id(card_id):
 		return
+	card_pool.append(card.duplicate(true))
+
+## Registers any unlocked roguelike card IDs from ProgressionManager into card_pool; returns count added.
+func sync_unlocked_cards(progression_manager: Object) -> int:
+	if progression_manager == null or not progression_manager.has_method("get_unlocked_roguelike_cards"):
+		return 0
+	var added: int = 0
+	var unlocked_ids = progression_manager.get_unlocked_roguelike_cards()
+	if unlocked_ids is Array:
+		for raw_id in unlocked_ids:
+			var card_id: String = str(raw_id)
+			if card_id.is_empty() or _has_card_id(card_id):
+				continue
+			register_card({
+				"id": card_id,
+				"name": card_id,
+				"type": "ATK_UP",
+				"value": 0.15,
+				"effect": "Unlocked: %s" % card_id,
+			})
+			added += 1
+	return added
+
+## Loads moddable card definitions from a JSON array or {"cards": [...]} dictionary; returns count added.
+func load_cards_from_json(json_text: String) -> int:
+	if json_text.strip_edges().is_empty():
+		return 0
+	var json := JSON.new()
+	if json.parse(json_text) != OK:
+		return 0
+	var entries: Array = []
+	if json.data is Array:
+		entries = json.data
+	elif json.data is Dictionary:
+		if json.data.has("cards") and json.data["cards"] is Array:
+			entries = json.data["cards"]
+		elif json.data.has("id"):
+			entries = [json.data]
+	var added: int = 0
+	for entry in entries:
+		if entry is Dictionary:
+			var card_id: String = str(entry.get("id", ""))
+			if not card_id.is_empty() and not _has_card_id(card_id):
+				register_card(entry)
+				added += 1
+	return added
+
+func _has_card_id(card_id: String) -> bool:
 	for existing in card_pool:
 		if str(existing.get("id", "")) == card_id:
-			return
-	card_pool.append(card.duplicate(true))
+			return true
+	return false
 
 ## Samples up to count distinct cards without replacement from card_pool.
 func roll_cards(count: int = 3) -> Array[Dictionary]:

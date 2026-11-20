@@ -62,10 +62,16 @@ func _run_tests() -> void:
 	mgr.apply_render_scale(2.0)
 	check(is_equal_approx(mgr.current_render_scale, 1.0), "apply_render_scale(> 1.0) must clamp to 1.0")
 
-	# Render scale viewport integration when inside tree
+	# Render scale & shadow tier viewport integration when inside tree
 	root.add_child(mgr)
 	mgr.apply_render_scale(0.8)
 	check(is_equal_approx(root.scaling_3d_scale, 0.8), "apply_render_scale inside tree must update viewport scaling_3d_scale")
+	mgr.apply_shadow_tier(1)
+	check(root.positional_shadow_atlas_size == 1024, "apply_shadow_tier(1) inside tree must set viewport positional_shadow_atlas_size to 1024")
+	mgr.apply_shadow_tier(3)
+	check(root.positional_shadow_atlas_size == 4096, "apply_shadow_tier(3) inside tree must set viewport positional_shadow_atlas_size to 4096")
+	mgr.apply_shadow_tier(0)
+	check(root.positional_shadow_atlas_size == 0, "apply_shadow_tier(0) inside tree must set viewport positional_shadow_atlas_size to 0")
 	root.remove_child(mgr)
 
 	# Draw distance updates and clamping [50.0, 200.0]
@@ -94,10 +100,11 @@ func _run_tests() -> void:
 	mgr.apply_max_active_students(99)
 	check(mgr.max_active_students == 10, "apply_max_active_students(> 10) must clamp to 10")
 
-	# Toggles
-	mgr.bloom_enabled = false
-	mgr.dof_enabled = true
-	mgr.particles_enabled = false
+	# Toggles & apply_post_processing
+	var pp_signals := [0]
+	mgr.settings_changed.connect(func(): pp_signals[0] += 1)
+	mgr.apply_post_processing(false, true, false)
+	check(pp_signals[0] == 1, "apply_post_processing must emit settings_changed")
 	check(mgr.bloom_enabled == false, "bloom_enabled must toggle to false")
 	check(mgr.dof_enabled == true, "dof_enabled must toggle to true")
 	check(mgr.particles_enabled == false, "particles_enabled must toggle to false")

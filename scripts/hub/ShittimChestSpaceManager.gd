@@ -157,10 +157,10 @@ func _canonicalize_gesture(gesture_type: String) -> String:
 func _record_gesture(canonical_gesture: String) -> void:
 	match canonical_gesture:
 		"HEADPAT":
-			gesture_receiver.register_stroke(Vector2(45.0, 0.0))
-			gesture_receiver.register_stroke(Vector2(-45.0, 0.0))
-		"CHEEK_PINCH":
-			gesture_receiver.register_stroke(Vector2(24.0, 12.0))
+			gesture_receiver.register_headpat_stroke(Vector2(45.0, 0.0))
+			gesture_receiver.register_headpat_stroke(Vector2(-45.0, 0.0))
+		"CHEEK_PINCH", "POKE":
+			gesture_receiver.register_cheek_pinch(Vector2(24.0, 12.0))
 
 func _get_greeting_bucket(current_hour: float) -> String:
 	if current_hour >= 2.0 and current_hour < 3.0:

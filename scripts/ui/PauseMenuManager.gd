@@ -3,6 +3,7 @@ class_name PauseMenuManager
 extends Control
 
 signal pause_toggled(is_paused: bool)
+signal settings_requested()
 
 var is_paused: bool = false
 var save_manager: Node = null
@@ -17,6 +18,8 @@ func toggle_pause() -> bool:
 	visible = is_paused
 	if is_inside_tree():
 		get_tree().paused = is_paused
+	if is_paused and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	pause_toggled.emit(is_paused)
 	return is_paused
 
@@ -55,6 +58,10 @@ func _connect_buttons() -> void:
 	if load_btn != null and not load_btn.pressed.is_connected(_on_load_pressed):
 		load_btn.pressed.connect(_on_load_pressed)
 
+	var settings_btn := find_child("SettingsButton", true, false) as Button
+	if settings_btn != null and not settings_btn.pressed.is_connected(_on_settings_pressed):
+		settings_btn.pressed.connect(_on_settings_pressed)
+
 	var quit_btn := find_child("QuitButton", true, false) as Button
 	if quit_btn != null and not quit_btn.pressed.is_connected(_on_quit_pressed):
 		quit_btn.pressed.connect(_on_quit_pressed)
@@ -68,6 +75,9 @@ func _on_save_pressed() -> void:
 
 func _on_load_pressed() -> void:
 	request_load(1)
+
+func _on_settings_pressed() -> void:
+	settings_requested.emit()
 
 func _on_quit_pressed() -> void:
 	if is_inside_tree():

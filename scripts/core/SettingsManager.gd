@@ -5,6 +5,7 @@ signal settings_changed()
 
 const DEFAULT_SETTINGS_PATH: String = "res://saves/settings.json"
 const FALLBACK_SETTINGS_PATH: String = "user://settings.json"
+const SHADOW_ATLAS_SIZES: Array[int] = [0, 1024, 2048, 4096]
 
 var settings_path: String = ""
 var current_render_scale: float = 1.0
@@ -75,10 +76,20 @@ func apply_draw_distance(dist: float) -> void:
 
 func apply_shadow_tier(tier: int) -> void:
 	shadow_tier = clampi(tier, 0, 3)
+	if is_inside_tree():
+		var vp: Viewport = get_viewport()
+		if vp != null:
+			vp.positional_shadow_atlas_size = SHADOW_ATLAS_SIZES[shadow_tier]
 	settings_changed.emit()
 
 func apply_max_active_students(cap: int) -> void:
 	max_active_students = clampi(cap, 1, 10)
+	settings_changed.emit()
+
+func apply_post_processing(p_bloom: bool, p_dof: bool, p_particles: bool) -> void:
+	bloom_enabled = p_bloom
+	dof_enabled = p_dof
+	particles_enabled = p_particles
 	settings_changed.emit()
 
 func reset_to_defaults() -> void:
@@ -86,10 +97,7 @@ func reset_to_defaults() -> void:
 	apply_draw_distance(120.0)
 	apply_shadow_tier(2)
 	apply_max_active_students(5)
-	bloom_enabled = true
-	dof_enabled = false
-	particles_enabled = true
-	settings_changed.emit()
+	apply_post_processing(true, false, true)
 
 func to_dict() -> Dictionary:
 	return {

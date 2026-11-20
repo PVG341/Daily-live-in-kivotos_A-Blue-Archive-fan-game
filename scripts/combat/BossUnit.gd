@@ -34,10 +34,11 @@ func update_phase_from_hp() -> int:
 		phase_changed.emit(current_phase)
 	return current_phase
 
-## Applies damage via EnemyUnit/CombatUnit and updates boss phase immediately.
+## Applies damage via EnemyUnit/CombatUnit and updates boss phase immediately while alive.
 func take_damage(amount: int, source: Object = null) -> int:
 	var damage_taken: int = super.take_damage(amount, source)
-	update_phase_from_hp()
+	if is_alive:
+		update_phase_from_hp()
 	return damage_taken
 
 ## Returns the telegraphed attack pattern configuration for the active boss phase.

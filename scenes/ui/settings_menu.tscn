@@ -47,9 +47,7 @@ func _on_apply_pressed() -> void:
 	mgr.apply_draw_distance(draw_distance_slider.value)
 	mgr.apply_shadow_tier(shadow_tier_option.selected)
 	mgr.apply_max_active_students(int(max_students_spin.value))
-	mgr.bloom_enabled = bloom_checkbox.button_pressed
-	mgr.dof_enabled = dof_checkbox.button_pressed
-	mgr.particles_enabled = particles_checkbox.button_pressed
+	mgr.apply_post_processing(bloom_checkbox.button_pressed, dof_checkbox.button_pressed, particles_checkbox.button_pressed)
 	mgr.save_settings()
 
 func _on_reset_pressed() -> void:

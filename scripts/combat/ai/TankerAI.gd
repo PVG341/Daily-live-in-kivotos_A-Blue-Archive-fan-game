@@ -43,6 +43,8 @@ func pick_cover_point(covers: Array, enemies: Array = []) -> Variant:
 
 ## Takes forward cover to taunt enemies, or directly engages the nearest living enemy if no cover is free.
 func evaluate_action(owner_unit: Object, _allies: Array, enemies: Array, covers: Array) -> Dictionary:
+	if owner_unit != null and not _is_unit_alive(owner_unit):
+		return _make_action("IDLE", null, 0.0)
 	if should_yield_to_player(owner_unit):
 		return _yield_action()
 

@@ -76,9 +76,20 @@ func scan_and_load_mods() -> Array[Dictionary]:
 	for file_name in root_files:
 		if file_name.to_lower().ends_with(".pck"):
 			var pck_mod_id: String = file_name.get_basename()
-			if not is_mod_enabled(pck_mod_id):
-				continue
 			var full_pck_path: String = mod_root_dir.path_join(file_name)
+			if not is_mod_enabled(pck_mod_id):
+				loaded_mods.append({
+					"id": pck_mod_id,
+					"name": pck_mod_id,
+					"version": "1.0.0",
+					"author": "",
+					"description": "",
+					"path": full_pck_path,
+					"enabled": false,
+					"students": [],
+					"packages": [],
+				})
+				continue
 			if load_pck_package(full_pck_path):
 				var pck_meta: Dictionary = {
 					"id": pck_mod_id,
@@ -143,8 +154,13 @@ func load_student_from_json(path: String) -> StudentData:
 	return parse_student_json(content)
 
 func resolve_model_path(path: String, is_chibi: bool = false) -> String:
-	if not path.is_empty() and (FileAccess.file_exists(path) or ResourceLoader.exists(path)):
-		return path
+	if not path.is_empty():
+		if FileAccess.file_exists(path) or ResourceLoader.exists(path):
+			return path
+		if path.is_relative_path() and not mod_root_dir.is_empty():
+			var mod_relative_path: String = mod_root_dir.path_join(path)
+			if FileAccess.file_exists(mod_relative_path) or ResourceLoader.exists(mod_relative_path):
+				return mod_relative_path
 	return PLACEHOLDER_CHIBI_MODEL if is_chibi else PLACEHOLDER_NORMAL_MODEL
 
 func load_pck_package(path: String) -> bool:
@@ -158,10 +174,20 @@ func get_loaded_mods() -> Array[Dictionary]:
 		copy.append(mod_meta.duplicate(true))
 	return copy
 
+func get_enabled_mods() -> Array[Dictionary]:
+	var copy: Array[Dictionary] = []
+	for mod_meta in loaded_mods:
+		if bool(mod_meta.get("enabled", true)):
+			copy.append(mod_meta.duplicate(true))
+	return copy
+
 func set_mod_enabled(mod_id: String, enabled: bool) -> void:
 	if mod_id.is_empty():
 		return
 	_mod_enabled_states[mod_id] = enabled
+	for mod_meta in loaded_mods:
+		if str(mod_meta.get("id", "")) == mod_id:
+			mod_meta["enabled"] = enabled
 	_save_mod_settings()
 
 func is_mod_enabled(mod_id: String) -> bool:
@@ -179,8 +205,22 @@ func _load_single_mod(mod_dir: String, fallback_id: String) -> Dictionary:
 	if mod_id.is_empty():
 		mod_id = fallback_id
 
-	if not is_mod_enabled(mod_id):
-		return {}
+	var enabled: bool = is_mod_enabled(mod_id)
+	var mod_meta: Dictionary = {
+		"id": mod_id,
+		"name": str(info.get("name", mod_id)),
+		"version": str(info.get("version", "1.0.0")),
+		"author": str(info.get("author", "")),
+		"description": str(info.get("description", "")),
+		"path": mod_dir,
+		"enabled": enabled,
+		"students": [],
+		"packages": [],
+	}
+
+	if not enabled:
+		loaded_mods.append(mod_meta)
+		return mod_meta
 
 	var loaded_packages: Array[String] = []
 	var packages_dir: String = mod_dir.path_join("packages")
@@ -202,17 +242,8 @@ func _load_single_mod(mod_dir: String, fallback_id: String) -> Dictionary:
 						loaded_students[student.id] = student
 						loaded_student_ids.append(student.id)
 
-	var mod_meta: Dictionary = {
-		"id": mod_id,
-		"name": str(info.get("name", mod_id)),
-		"version": str(info.get("version", "1.0.0")),
-		"author": str(info.get("author", "")),
-		"description": str(info.get("description", "")),
-		"path": mod_dir,
-		"enabled": true,
-		"students": loaded_student_ids,
-		"packages": loaded_packages,
-	}
+	mod_meta["students"] = loaded_student_ids
+	mod_meta["packages"] = loaded_packages
 	loaded_mods.append(mod_meta)
 	_emit_mod_loaded(mod_id)
 	return mod_meta

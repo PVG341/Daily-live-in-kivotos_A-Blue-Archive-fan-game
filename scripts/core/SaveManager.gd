@@ -25,6 +25,7 @@ var current_ap: int = 100
 var max_ap: int = 100
 var credits: int = 0
 var bonds: Dictionary = {}
+var bonds_exp: Dictionary = {}
 var inventory: Array = []
 var current_zone: String = "schale_office"
 var playtime: float = 0.0
@@ -81,6 +82,8 @@ func _connect_event_bus() -> void:
 			bus.save_requested.connect(_on_save_requested)
 		if bus.has_signal("load_requested") and not bus.load_requested.is_connected(_on_load_requested):
 			bus.load_requested.connect(_on_load_requested)
+		if bus.has_signal("item_picked_up") and not bus.item_picked_up.is_connected(_on_item_picked_up):
+			bus.item_picked_up.connect(_on_item_picked_up)
 
 func _on_save_requested() -> void:
 	save_game(current_slot)
@@ -88,11 +91,22 @@ func _on_save_requested() -> void:
 func _on_load_requested(slot: int) -> void:
 	load_game(slot)
 
+func _on_item_picked_up(item_id: String, quantity: int) -> void:
+	if item_id.is_empty() or quantity <= 0:
+		return
+	for entry in inventory:
+		if entry is Dictionary and str(entry.get("id", "")) == item_id:
+			entry["qty"] = int(entry.get("qty", 0)) + quantity
+			return
+	inventory.append({"id": item_id, "qty": quantity})
+
 func register_student(student: StudentData) -> void:
 	if student and not student.id.is_empty():
 		students[student.id] = student
 		if not bonds.has(student.id):
 			bonds[student.id] = student.bond_level
+		if not bonds_exp.has(student.id):
+			bonds_exp[student.id] = student.bond_exp
 
 func state_to_json(state: Dictionary) -> String:
 	return JSON.stringify(state, "\t")
@@ -116,10 +130,12 @@ func serialize_game_state() -> Dictionary:
 	var max_ap_val: int = dcm.max_ap if dcm else max_ap
 
 	var bonds_copy = bonds.duplicate(true)
+	var bonds_exp_copy = bonds_exp.duplicate(true)
 	for student_id in students:
 		var student = students[student_id]
 		if student is StudentData:
 			bonds_copy[student_id] = student.bond_level
+			bonds_exp_copy[student_id] = student.bond_exp
 
 	var state: Dictionary = {
 		"day": day_val,
@@ -128,6 +144,7 @@ func serialize_game_state() -> Dictionary:
 		"max_ap": max_ap_val,
 		"credits": credits,
 		"bonds": bonds_copy,
+		"bonds_exp": bonds_exp_copy,
 		"inventory": inventory.duplicate(true),
 		"current_zone": current_zone,
 		"playtime": playtime
@@ -168,12 +185,27 @@ func deserialize_game_state(data: Dictionary) -> bool:
 		for student_id in bonds:
 			if students.has(student_id) and students[student_id] is StudentData:
 				students[student_id].bond_level = int(bonds[student_id])
+	if state_data.has("bonds_exp") and state_data["bonds_exp"] is Dictionary:
+		bonds_exp = state_data["bonds_exp"].duplicate(true)
+		for student_id in bonds_exp:
+			if students.has(student_id) and students[student_id] is StudentData:
+				students[student_id].bond_exp = int(bonds_exp[student_id])
 	if state_data.has("inventory") and state_data["inventory"] is Array:
 		inventory = state_data["inventory"].duplicate(true)
 	if state_data.has("current_zone"):
 		current_zone = str(state_data["current_zone"])
 	if state_data.has("playtime"):
 		playtime = float(state_data["playtime"])
+
+	var dcm_bus: Node = dcm._get_event_bus() if dcm != null and dcm.has_method("_get_event_bus") else null
+	if dcm != null and dcm.has_method("_emit_ap_changed"):
+		dcm._emit_ap_changed()
+	var bus = _get_event_bus()
+	if bus != null:
+		if (dcm == null or dcm_bus != bus) and bus.has_signal("ap_changed"):
+			bus.ap_changed.emit(current_ap, max_ap)
+		if bus.has_signal("day_advanced"):
+			bus.day_advanced.emit(current_day, false)
 
 	return true
 

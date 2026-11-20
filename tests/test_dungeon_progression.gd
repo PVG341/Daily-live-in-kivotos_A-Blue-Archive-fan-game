@@ -126,6 +126,22 @@ func _run_tests() -> void:
 	card_mgr.clear_session_buffs()
 	check(card_mgr.get_active_buffs().is_empty(), "clear_session_buffs must clear all active buffs")
 
+	# Sync unlocked cards from ProgressionManager & load_cards_from_json
+	var prog_script: GDScript = load("res://scripts/core/ProgressionManager.gd")
+	var prog_mgr = prog_script.new()
+	prog_mgr.unlock_horizontal_option("shiroko", "ROGUELIKE_CARD", "card_shiroko_drone")
+	var synced_count: int = card_mgr.sync_unlocked_cards(prog_mgr)
+	check(synced_count == 1, "sync_unlocked_cards must register 1 new card")
+	check(card_mgr.sync_unlocked_cards(prog_mgr) == 0, "sync_unlocked_cards must not duplicate already-registered cards")
+	check(card_mgr.apply_buff("card_shiroko_drone") == true, "Synced unlocked card must be applicable via apply_buff")
+	prog_mgr.free()
+
+	var json_cards := '[{"id":"mod_card_1","name":"Mod Card 1","type":"ATK_UP","value":0.25,"effect":"ATK+25%"},{"id":"fire_rounds","name":"Dup","type":"ATK_UP","value":0.1}]'
+	var loaded_cards: int = card_mgr.load_cards_from_json(json_cards)
+	check(loaded_cards == 1, "load_cards_from_json must register 1 new non-duplicate card")
+	check(card_mgr.apply_buff("mod_card_1") == true, "JSON-loaded mod card must be applicable via apply_buff")
+	check(card_mgr.load_cards_from_json("invalid json") == 0, "load_cards_from_json must return 0 on invalid JSON")
+
 	# 4. DungeonRoomManager tests
 	var room_mgr = room_mgr_script.new()
 	check(room_mgr is Node, "DungeonRoomManager must extend Node")

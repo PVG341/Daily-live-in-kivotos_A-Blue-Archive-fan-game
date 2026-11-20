@@ -191,6 +191,21 @@ func _run_tests() -> void:
 	hud_inst.update_credits(999)
 	root.add_child(hud_inst)
 	check(hud_inst.find_child("DayLabel", true, false).text.contains("Day"), "hud.tscn DayLabel must display day text after _ready()")
+	var root_sm := root.get_node_or_null("SaveManager")
+	var root_dcm := root.get_node_or_null("DayCycleManager")
+	if root_sm != null and root_dcm != null:
+		var orig_credits: int = root_sm.credits
+		var orig_day: int = root_dcm.current_day
+		var orig_ap: int = root_dcm.current_ap
+		root_sm.credits = 42000
+		root_dcm.current_day = 9
+		root_dcm.current_ap = 65
+		root_sm.game_loaded.emit(1)
+		check(hud_inst.displayed_credits == 42000 and hud_inst.displayed_day == 9 and hud_inst.displayed_ap == 65, "HUDManager must resync state on SaveManager.game_loaded")
+		check(hud_inst.find_child("DayLabel", true, false).text == "Day 9", "HUDManager must refresh DayLabel on SaveManager.game_loaded")
+		root_sm.credits = orig_credits
+		root_dcm.current_day = orig_day
+		root_dcm.current_ap = orig_ap
 	root.remove_child(hud_inst)
 	hud_inst.free()
 
@@ -218,6 +233,10 @@ func _run_tests() -> void:
 		check(pause_inst.find_child(btn_name, true, false) is Button, "pause_menu.tscn must contain %s Button" % btn_name)
 	root.add_child(pause_inst)
 	check(pause_inst.process_mode == Node.PROCESS_MODE_ALWAYS, "pause_menu.tscn must run with PROCESS_MODE_ALWAYS")
+	var settings_req_count := [0]
+	pause_inst.settings_requested.connect(func(): settings_req_count[0] += 1)
+	pause_inst.find_child("SettingsButton", true, false).pressed.emit()
+	check(settings_req_count[0] == 1, "Pressing SettingsButton must emit settings_requested signal")
 	root.remove_child(pause_inst)
 	pause_inst.free()
 

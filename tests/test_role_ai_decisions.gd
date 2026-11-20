@@ -204,6 +204,24 @@ func _run_tests() -> void:
 	var emergency_eval: Dictionary = dps.evaluate_action(ordered_unit, [], enemies_with_ping, [])
 	check(emergency_eval["action"] == "ATTACK_TARGET", "After emergency override, Role AI must evaluate its combat action")
 
+	# 6. Dead CombatUnit (unit.die()) must evaluate to IDLE across all Role AIs
+	var fallen_unit = unit_script.new()
+	fallen_unit.setup(_make_student("fallen", "Fallen", 1000, StudentData.CombatRole.TANKER))
+	fallen_unit.receive_move_order(Vector3(1.0, 0.0, 1.0))
+	fallen_unit.die()
+	for ai_entry in [
+		["RoleAIBase", role_base],
+		["TankerAI", tanker],
+		["DamageDealerAI", dps],
+		["HealerAI", healer],
+		["BufferAI", buffer],
+	]:
+		var ai_name: String = ai_entry[0]
+		var ai_node = ai_entry[1]
+		var dead_eval: Dictionary = ai_node.evaluate_action(fallen_unit, [hoshino_unit], [enemy_node], [c_full_near])
+		check(dead_eval["action"] == "IDLE" and dead_eval["target"] == null, "%s must return IDLE when owner_unit is dead" % ai_name)
+	fallen_unit.free()
+
 	# Cleanup
 	healer.free()
 	tanker.free()

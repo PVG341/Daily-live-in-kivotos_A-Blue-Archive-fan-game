@@ -25,8 +25,13 @@ func start_session(student: StudentData) -> void:
 	current_student = student
 	gesture_receiver.reset()
 	_reset_blendshapes()
-	if student != null and not student.id.is_empty() and not bond_tracker.has_student(student.id):
-		bond_tracker.seed_student_bond(student.id, student.bond_level, student.bond_exp)
+	if student != null and not student.id.is_empty():
+		if (
+			not bond_tracker.has_student(student.id)
+			or student.bond_level != bond_tracker.get_bond_level(student.id)
+			or student.bond_exp != bond_tracker.get_bond_exp(student.id)
+		):
+			bond_tracker.seed_student_bond(student.id, student.bond_level, student.bond_exp)
 
 func end_session() -> void:
 	current_student = null
@@ -34,7 +39,7 @@ func end_session() -> void:
 	_reset_blendshapes()
 
 func apply_headpat_Input(delta: Vector2) -> float:
-	gesture_receiver.register_stroke(delta)
+	gesture_receiver.register_headpat_stroke(delta)
 	var satisfaction: float = gesture_receiver.get_headpat_satisfaction()
 	blendshape_weights["eye_smile"] = clampf(satisfaction, 0.0, 1.0)
 	blendshape_weights["blush"] = clampf(
@@ -44,8 +49,11 @@ func apply_headpat_Input(delta: Vector2) -> float:
 	)
 	return satisfaction
 
+func apply_headpat_input(delta: Vector2) -> float:
+	return apply_headpat_Input(delta)
+
 func apply_cheek_pinch_input(delta: Vector2) -> float:
-	gesture_receiver.register_stroke(delta)
+	gesture_receiver.register_cheek_pinch(delta)
 	var offset: float = gesture_receiver.get_cheek_pinch_offset()
 	blendshape_weights["cheek_puff"] = clampf(offset, 0.0, 1.0)
 	if offset > 0.0:

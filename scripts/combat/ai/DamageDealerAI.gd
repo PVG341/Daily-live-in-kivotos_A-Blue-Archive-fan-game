@@ -32,6 +32,8 @@ func pick_attack_target(enemies: Array) -> Variant:
 
 ## Evaluates DPS action by focusing pinged or weakened living enemies unless yielding to player order.
 func evaluate_action(owner_unit: Object, _allies: Array, enemies: Array, _covers: Array) -> Dictionary:
+	if owner_unit != null and not _is_unit_alive(owner_unit):
+		return _make_action("IDLE", null, 0.0)
 	if should_yield_to_player(owner_unit):
 		return _yield_action()
 

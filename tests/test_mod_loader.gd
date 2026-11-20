@@ -95,6 +95,11 @@ func _run_tests(loader: Node, event_bus: Node) -> void:
 	_write_text_file(existing_file_path, "dummy")
 	check(loader.resolve_model_path(existing_file_path, false) == existing_file_path, "Existing model path should be returned as-is")
 
+	var mod_rel_model_path := TEST_MODS_DIR.path_join("sample_mod/models/normal.glb")
+	_write_text_file(mod_rel_model_path, "dummy_rel")
+	loader.mod_root_dir = TEST_MODS_DIR
+	check(loader.resolve_model_path("sample_mod/models/normal.glb", false) == mod_rel_model_path, "Relative model path inside mod_root_dir should resolve to mod_root_dir.path_join(path)")
+
 	# 4. Invalid JSON handling (must return null without crashing)
 	check(loader.parse_student_json("not valid json") == null, "Invalid JSON must return null")
 	check(loader.parse_student_json("") == null, "Empty JSON must return null")
@@ -126,11 +131,16 @@ func _run_tests(loader: Node, event_bus: Node) -> void:
 	var shiroko: StudentData = loader.loaded_students.get("shiroko_mod")
 	check(shiroko != null and shiroko.role == StudentData.CombatRole.TANKER and shiroko.squad_slot == StudentData.SquadSlot.SPECIAL, "Loaded mod student enum fields must match")
 
-	# Disabled mod should be skipped on scan
+	# Disabled mod should still be listed with enabled == false (for ModManagerUI) but skip loading & mod_loaded
 	loaded_events.clear()
 	loader.set_mod_enabled("sample_mod", false)
+	check(loader.get_loaded_mods()[0].get("enabled", true) == false, "set_mod_enabled must immediately update entry['enabled'] in loaded_mods")
+	check(loader.get_enabled_mods().size() == 0, "get_enabled_mods() must exclude disabled mods")
 	var mods_after_disable: Array[Dictionary] = loader.scan_and_load_mods()
-	check(mods_after_disable.size() == 0, "Disabled mod should be skipped during scan")
+	check(mods_after_disable.size() == 1, "Disabled mod should still be recorded in loaded_mods")
+	check(mods_after_disable[0].get("id") == "sample_mod" and mods_after_disable[0].get("enabled") == false, "Disabled mod entry must have enabled == false")
+	check(loader.get_enabled_mods().size() == 0, "get_enabled_mods() must return 0 when sample_mod is disabled")
+	check(not loader.loaded_students.has("shiroko_mod"), "Disabled mod must not load students")
 	check(loaded_events.size() == 0, "Disabled mod should not emit mod_loaded")
 
 	# Verify settings persistence to disk
@@ -140,6 +150,10 @@ func _run_tests(loader: Node, event_bus: Node) -> void:
 	loader2._load_mod_settings()
 	check(loader2.is_mod_enabled("sample_mod") == false, "Persisted disabled mod state should load in new instance")
 	loader2.free()
+
+	loader.set_mod_enabled("sample_mod", true)
+	check(loader.get_loaded_mods()[0].get("enabled", false) == true, "set_mod_enabled(true) must update entry['enabled'] to true in loaded_mods")
+	check(loader.get_enabled_mods().size() == 1, "get_enabled_mods() must include re-enabled mod")
 
 	# Direct load_student_from_json check
 	var loaded_from_file: StudentData = loader.load_student_from_json(sample_mod_dir.path_join("students/shiroko.json"))

@@ -182,6 +182,10 @@ func _run_tests() -> void:
 		var synced_result: Dictionary = spawner.calculate_daily_visitors(roster, 2000)
 		check(synced_result["active_spawns"].size() == 3, "Synced cap 3 must restrict active_spawns to 3")
 		check(synced_result["overflow_queue"].size() == 4, "Synced cap 3 with 7 desired visitors must put 4 into overflow_queue")
+		var rotated_result: Dictionary = spawner.calculate_daily_visitors(roster, 2000, 2)
+		check(rotated_result["active_spawns"] == ["serika", "nonomi", "ayane"], "day_offset=2 must rotate selection order to start at index 2")
+		var neg_rotated: Dictionary = spawner.calculate_daily_visitors(roster, 0, -1)
+		check(neg_rotated["active_spawns"] == ["aru"], "Negative day_offset=-1 must wrap cleanly via posmod to last student")
 		settings.free()
 
 	_completed = true

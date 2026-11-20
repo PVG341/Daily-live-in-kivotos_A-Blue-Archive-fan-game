@@ -19,15 +19,20 @@ func should_yield_to_player_dict(owner_dict: Dictionary) -> bool:
 
 ## Evaluates the next AI decision, yielding to player orders unless overridden.
 func evaluate_action(owner_unit: Object, _allies: Array, _enemies: Array, _covers: Array) -> Dictionary:
+	if owner_unit != null and not _is_unit_alive(owner_unit):
+		return _make_action("IDLE", null, 0.0)
 	if should_yield_to_player(owner_unit):
 		return _yield_action()
 	return _idle_action()
 
+func _make_action(action: String, target: Variant = null, priority: float = 0.0) -> Dictionary:
+	return {"action": action, "target": target, "priority": priority}
+
 func _yield_action() -> Dictionary:
-	return {"action": "YIELD_TO_PLAYER", "target": null, "priority": 0.0}
+	return _make_action("YIELD_TO_PLAYER", null, 0.0)
 
 func _idle_action() -> Dictionary:
-	return {"action": "IDLE", "target": null, "priority": 0.0}
+	return _make_action("IDLE", null, 0.0)
 
 func _is_unit_alive(unit: Variant) -> bool:
 	if unit == null:

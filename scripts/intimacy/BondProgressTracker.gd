@@ -84,6 +84,8 @@ func _process_level_ups(student_id: String) -> void:
 		_bond_levels[student_id] = level
 		_bond_exp[student_id] = exp_val
 		_emit_student_bonded(student_id, level)
+		level = int(_bond_levels.get(student_id, 0))
+		exp_val = int(_bond_exp.get(student_id, 0))
 
 func _emit_student_bonded(student_id: String, new_level: int) -> void:
 	var bus := _get_event_bus()

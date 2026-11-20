@@ -19,6 +19,8 @@ func calculate_optimal_position(ally_positions: Array, _aura_radius: float = 5.0
 
 ## Positions the buffer at the centroid of living allies to apply team buffs unless yielding to player order.
 func evaluate_action(owner_unit: Object, allies: Array, _enemies: Array, _covers: Array) -> Dictionary:
+	if owner_unit != null and not _is_unit_alive(owner_unit):
+		return _make_action("IDLE", null, 0.0)
 	if should_yield_to_player(owner_unit):
 		return _yield_action()
 

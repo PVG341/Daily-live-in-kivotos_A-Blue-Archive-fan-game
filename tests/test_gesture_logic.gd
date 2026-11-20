@@ -220,10 +220,24 @@ func _run_tests() -> void:
 	check(viewport_node.blendshape_weights["eye_smile"] > 0.0, "Headpat must increase eye_smile blendshape weight")
 	check(viewport_node.blendshape_weights["blush"] > 0.0, "Headpat must increase blush blendshape weight")
 
-	# Cheek pinch input updates cheek_puff weight
-	var pinch_offset: float = viewport_node.apply_cheek_pinch_input(Vector2(30.0, 0.0))
-	check(pinch_offset > 0.0, "apply_cheek_pinch_input must return positive offset")
+	# Cheek pinch input updates cheek_puff weight and must NOT build headpat satisfaction
+	viewport_node.gesture_receiver.reset()
+	var exp_before_pinches: int = viewport_node.bond_tracker.get_bond_exp("shiroko")
+	for _i in range(6):
+		viewport_node.apply_cheek_pinch_input(Vector2(60.0, 0.0))
+		viewport_node.apply_cheek_pinch_input(Vector2(-60.0, 0.0))
+	var pinch_offset: float = viewport_node.gesture_receiver.get_cheek_pinch_offset()
+	check(pinch_offset > 0.0 and pinch_offset <= 1.0, "apply_cheek_pinch_input must return clamped offset in (0.0, 1.0]")
 	check(viewport_node.blendshape_weights["cheek_puff"] > 0.0, "Cheek pinch must increase cheek_puff blendshape weight")
+	check(is_equal_approx(viewport_node.gesture_receiver.get_headpat_satisfaction(), 0.0), "Repeated apply_cheek_pinch_input back-and-forth strokes must NOT increase headpat satisfaction")
+	check(viewport_node.bond_tracker.get_bond_exp("shiroko") == exp_before_pinches, "Repeated cheek pinches must NOT award headpat completion EXP")
+
+	# Lowercase alias apply_headpat_input works and does not touch cheek_pinch_offset
+	viewport_node.gesture_receiver.reset()
+	viewport_node.apply_headpat_input(Vector2(50.0, 0.0))
+	var sat_alias: float = viewport_node.apply_headpat_input(Vector2(-50.0, 0.0))
+	check(sat_alias > 0.0, "apply_headpat_input alias must build headpat satisfaction")
+	check(is_equal_approx(viewport_node.gesture_receiver.get_cheek_pinch_offset(), 0.0), "apply_headpat_input must NOT modify cheek_pinch_offset")
 
 	# Feed student updates mouth_open and adds bond EXP without clobbering existing bond_level
 	var feed_result: Dictionary = viewport_node.feed_student(fav_food)
@@ -246,9 +260,20 @@ func _run_tests() -> void:
 	check(saved_student.bond_level == 4, "Pre-existing bond_level (3) must increment to 4 after reaching threshold (350)")
 	check(saved_student.bond_exp == 20, "Overflow bond_exp (340 + 30 - 350 = 20) must be preserved on StudentData")
 
-	# Register custom modded action
+	# Register and trigger custom modded action
 	viewport_node.register_custom_action("boop_nose", {"label": "Boop Nose", "bond_bonus": 15})
 	check(viewport_node.custom_actions.has("boop_nose"), "register_custom_action must store custom modded action")
+	var arisu_exp_before: int = saved_student.bond_exp
+	check(viewport_node.trigger_custom_action("boop_nose") == true, "trigger_custom_action('boop_nose') must succeed")
+	check(saved_student.bond_exp == arisu_exp_before + 15, "trigger_custom_action('boop_nose') must award 15 bond EXP")
+	check(viewport_node.trigger_custom_action("nonexistent_action") == false, "trigger_custom_action on unknown action must return false")
+
+	# Re-seeding start_session when StudentData has newer loaded save values
+	saved_student.bond_level = 7
+	saved_student.bond_exp = 55
+	viewport_node.start_session(saved_student)
+	check(viewport_node.bond_tracker.get_bond_level("arisu") == 7, "start_session must re-seed bond_tracker level when StudentData differs")
+	check(viewport_node.bond_tracker.get_bond_exp("arisu") == 55, "start_session must re-seed bond_tracker exp when StudentData differs")
 
 	viewport_node.end_session()
 	check(viewport_node.current_student == null, "end_session must clear current_student")

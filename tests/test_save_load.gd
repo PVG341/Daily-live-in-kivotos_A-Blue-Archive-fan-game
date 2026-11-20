@@ -192,3 +192,45 @@ func _run_tests(save_mgr: Node, day_mgr: Node, fresh_mgr: Node) -> void:
 	var slots_after_delete = save_mgr.get_save_slots()
 	for slot_info in slots_after_delete:
 		check(slot_info.get("slot") != test_slot, "Slot 99 should no longer exist after deletion")
+
+	# 4. Test bonds_exp persistence, item_picked_up inventory sync, and EventBus notifications on load
+	var bus = preload("res://scripts/core/EventBus.gd").new()
+	var ap_events: Array = []
+	var day_events: Array = []
+	bus.ap_changed.connect(func(cur: int, mx: int): ap_events.append([cur, mx]))
+	bus.day_advanced.connect(func(d: int, fat: bool): day_events.append([d, fat]))
+	save_mgr.set_event_bus(bus)
+	day_mgr.event_bus = bus
+
+	var shiroko := StudentData.new()
+	shiroko.id = "shiroko"
+	shiroko.student_name = "Shiroko"
+	shiroko.bond_level = 4
+	shiroko.bond_exp = 75
+	save_mgr.register_student(shiroko)
+
+	bus.item_picked_up.emit("donut", 2)
+	bus.item_picked_up.emit("yakisoba_bread", 3)
+	var donut_qty: int = 0
+	var bread_qty: int = 0
+	for entry in save_mgr.inventory:
+		if entry is Dictionary and entry.get("id", "") == "donut":
+			donut_qty = int(entry.get("qty", 0))
+		elif entry is Dictionary and entry.get("id", "") == "yakisoba_bread":
+			bread_qty = int(entry.get("qty", 0))
+	check(donut_qty == 3, "item_picked_up must increment existing 'donut' qty from 1 to 3")
+	check(bread_qty == 3, "item_picked_up must append new 'yakisoba_bread' qty 3")
+
+	var exp_serialized: Dictionary = save_mgr.serialize_game_state()
+	check(exp_serialized.has("bonds_exp") and int(exp_serialized["bonds_exp"].get("shiroko", 0)) == 75, "serialize_game_state must include StudentData.bond_exp in bonds_exp")
+
+	shiroko.bond_level = 1
+	shiroko.bond_exp = 0
+	ap_events.clear()
+	day_events.clear()
+	check(save_mgr.deserialize_game_state(exp_serialized) == true, "Deserializing state with bonds_exp must succeed")
+	check(shiroko.bond_level == 4 and shiroko.bond_exp == 75, "deserialize_game_state must restore StudentData.bond_level and bond_exp")
+	check(ap_events.size() == 1 and ap_events[0] == [80, 100], "deserialize_game_state must emit ap_changed")
+	check(day_events.size() == 1 and day_events[0] == [12, false], "deserialize_game_state must emit day_advanced")
+
+	bus.free()

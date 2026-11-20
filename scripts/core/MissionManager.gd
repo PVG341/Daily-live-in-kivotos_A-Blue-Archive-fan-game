@@ -55,13 +55,19 @@ func is_quest_ready_to_complete(quest_id: String) -> bool:
 func is_quest_completed(quest_id: String) -> bool:
 	return bool(completed_quests.get(quest_id, false))
 
-## Completes a ready quest, unlocks its bond gate on bond_tracker if provided, and emits quest_completed.
-func complete_quest(quest_id: String, bond_tracker: Object = null) -> bool:
+## Completes a ready quest, unlocks its bond gate and optional roguelike card, and emits quest_completed.
+func complete_quest(quest_id: String, bond_tracker: Object = null, progression_manager: Object = null) -> bool:
 	if not is_quest_ready_to_complete(quest_id):
 		return false
 	var quest: QuestDataScript = quests[quest_id]
 	completed_quests[quest_id] = true
 	if bond_tracker != null and bond_tracker.has_method("complete_bond_quest_gate"):
 		bond_tracker.complete_bond_quest_gate(quest.student_id, quest.required_bond_level)
+	if (
+		not quest.unlocks_roguelike_card_id.is_empty()
+		and progression_manager != null
+		and progression_manager.has_method("unlock_horizontal_option")
+	):
+		progression_manager.unlock_horizontal_option(quest.student_id, "ROGUELIKE_CARD", quest.unlocks_roguelike_card_id)
 	quest_completed.emit(quest_id, quest.student_id)
 	return true

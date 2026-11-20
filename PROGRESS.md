@@ -1,126 +1,114 @@
 # PROGRESS.md — Blue Archive 3D Fan Game (Godot 4.7)
 
-* **Ngày tổng hợp:** 2026-11-20
-* **Nhánh Git hiện tại:** `master` (HEAD: `591c00e`)
-* **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript làm ngôn ngữ chính, đã bật addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
+* **Ngày cập nhật:** 2026-11-20
+* **Nhánh Git hiện tại:** `master`
+* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm vòng Final Review Fix Wave tích hợp liên phân hệ), toàn bộ **21/21 bộ test headless** đều **PASS**.
+* **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript, addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
 * **Tài liệu nguồn:**
   * Design Spec: [docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md](docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md)
-  * Implementation Plan (16 Tasks): [docs/superpowers/plans/2026-11-19-blue-archive-fan-game.md](docs/superpowers/plans/2026-11-19-blue-archive-fan-game.md)
+  * Implementation Plan: [docs/superpowers/plans/2026-11-19-blue-archive-fan-game.md](docs/superpowers/plans/2026-11-19-blue-archive-fan-game.md)
   * SDD Ledger: `.superpowers/sdd/2026-11-19-blue-archive-fan-game/progress.md`
 
 ---
 
-## 1. Mục tiêu và Kiến trúc hiện tại của dự án
+## 1. Kiến trúc & Cấu trúc Dự án
 
-### Mục tiêu cốt lõi
-Xây dựng một **3D Fan Game Blue Archive** chơi đơn trên PC (Windows), tối ưu cho cả máy yếu (8GB RAM, iGPU ≥ 30–45 FPS ở cấu hình thấp), kết hợp hai trụ cột trải nghiệm:
-1. **Phó bản Chiến thuật Chibi 3D (Core Gameplay Loop):** Vượt ngục tối nhiều phòng (*Multi-Room Tactical Roguelike*) góc nhìn Isometric RTS, điều khiển micro từng đơn vị (drag-box, di chuyển, chọn cover, focus fire) kết hợp AI hành vi riêng cho 4 vai trò (**Tanker, Damage Dealer, Healer, Buffer**), 2 slot **Special** tích Cost Bar dùng **EX-Skill**, chọn 1 trong 3 thẻ bài buff giữa các phòng và các **sự kiện chiến đấu ngẫu nhiên** (pháo kích đồng minh, boss ẩn, thế lực thứ 3).
-2. **Đời sống Sensei & Tương tác Học viên (Emotional Core):** Khám phá các phân khu học viện bán mở (semi-open hubs + khu phố trung gian + nội cảnh tòa nhà) với góc nhìn chuyển đổi **FPS / TPS**, tương tác cử chỉ chuột trực tiếp (*xoa đầu, nhéo má, đút đồ ăn* kèm blendshape khuôn mặt), mini-game **nấu nướng thư giãn** (không đếm ngược vội vàng, có thanh phát động canh "điểm vàng" lúc nấu thành phẩm), quản lý vòng lặp ngày/AP (có **giới nghiêm 3:00 AM**), giao diện điện thoại **MomoTalk OS**.
-3. **Thân thiện Modding & DLC (Hybrid Portable Modding):** Thư mục mod đặt trực tiếp trong thư mục cài đặt game (`<game_dir>/mods/`, fallback `res://mods` trong Editor) để tránh tốn dung lượng ổ C; hỗ trợ nạp file JSON + asset rời lẫn gói `.pck`.
-
-### Kiến trúc & Cấu trúc thư mục hiện tại
-Dự án đi theo **Kiến trúc Đa phân hệ Phân tách rời & Hướng dữ liệu (Decoupled Modular & Data-Driven)**:
-* **Dual-Model Pipeline:** Model 1:1 (`normal_model.glb`) cho Hub & Tương tác; Model 3D Chibi (`chibi_model.glb`) cho Phó bản chiến thuật.
-* **Giao tiếp trung tâm:** `EventBus` autoload kết nối lỏng lẻo giữa các phân hệ `Core/`, `Data/`, `Hub/`, `Combat/`, `Minigames/`, `UI/`.
-* **Quy trình phát triển:** Subagent-Driven Development (TDD + Review từng task).
+Dự án áp dụng **Kiến trúc Đa phân hệ Phân tách rời & Hướng dữ liệu (Decoupled Modular & Data-Driven)**:
+* **Dual-Model Pipeline:** Model 1:1 (`normal_model_path`) cho Hub & Tương tác cận cảnh; Model 3D Chibi (`chibi_model_path`) cho Phó bản chiến thuật RTS, hỗ trợ fallback sang placeholder khi thiếu asset.
+* **Autoloads (`project.godot`):**
+  1. `EventBus` (`scripts/core/EventBus.gd`) — 9 signal toàn cục kết nối lỏng lẻo giữa Core, Hub, Intimacy, Combat và UI.
+  2. `DayCycleManager` (`scripts/core/DayCycleManager.gd`) — Vòng lặp ngày/giờ, hệ thống AP và giới nghiêm 3:00 AM.
+  3. `SaveManager` (`scripts/core/SaveManager.gd`) — Lưu/tải JSON portable (`<game_dir>/saves`, trong Editor là `res://saves`, fallback `user://saves`), đồng bộ `bonds_exp`, `item_picked_up`, và phát thông báo khi nạp save.
+  4. `ModLoader` (`scripts/core/ModLoader.gd`) — Nạp mod portable (`<game_dir>/mods`, trong Editor là `res://mods`), parse JSON học viên, nạp `.pck`, lưu trạng thái bật/tắt mod.
+  5. `ZoneTransitionManager` (`scripts/hub/ZoneTransitionManager.gd`) — Chuyển cảnh bất đồng bộ kèm màn hình loading.
+  6. `SettingsManager` (`scripts/core/SettingsManager.gd`) — Render scale, draw distance, shadow atlas tier, max active students, post-processing toggles.
+  7. `_mcp_game_helper` (`addons/godot_ai/runtime/game_helper.gd`).
 
 ```text
 D:\This PC\Project\test
-├── project.godot                     # Autoload: EventBus, DayCycleManager, _mcp_game_helper
+├── project.godot
 ├── docs/superpowers/
 │   ├── specs/2026-11-19-blue-archive-fan-game-design.md
 │   └── plans/2026-11-19-blue-archive-fan-game.md
+├── scenes/
+│   ├── combat/        # combat_camera.tscn, roguelike_card_draft.tscn
+│   ├── hub/           # loading_screen.tscn, player_sensei.tscn, shittim_chest_space.tscn
+│   ├── intimacy/      # intimacy_viewport.tscn
+│   ├── minigames/     # cooking_station.tscn
+│   └── ui/            # combat_hud.tscn, hud.tscn, mod_manager_menu.tscn, pause_menu.tscn, phone_os.tscn, settings_menu.tscn
 ├── scripts/
-│   ├── core/
-│   │   ├── EventBus.gd               # [Đã commit]
-│   │   ├── DayCycleManager.gd        # [Đã commit]
-│   │   └── SaveManager.gd            # [Chưa commit - đang dở & có lỗi]
-│   └── data/
-│       ├── StudentData.gd            # [Đã commit]
-│       ├── SkillData.gd              # [Đã commit]
-│       ├── ItemData.gd               # [Đã commit]
-│       └── RecipeData.gd             # [Đã commit]
-├── tests/
-│   ├── test_data_models.gd           # [PASS]
-│   ├── test_day_cycle.gd             # [PASS]
-│   ├── test_save_load.gd             # [FAIL - chưa commit]
-│   └── debug_save.gd                 # [File debug tạm - cần dọn]
-└── addons/
-    ├── godot_ai/                     # MCP kết nối live Godot Editor
-    └── GDQuest_GDScript_formatter/
+│   ├── core/          # EventBus, DayCycleManager, SaveManager, ModLoader, MissionManager, ProgressionManager, SettingsManager
+│   ├── data/          # StudentData, SkillData, ItemData, RecipeData, QuestData, FurnitureData
+│   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, DoorPortal, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
+│   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
+│   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
+│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE
+│   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI
+│   └── ui/            # HUDManager, PhoneOSManager, PauseMenuManager, ModManagerUI, CombatHUD
+├── shaders/           # cel_toon_shader.gdshader, outline_shader.gdshader
+└── tests/             # 21 bộ test headless (tests/test_*.gd)
 ```
 
-*(Các thư mục `scenes/`, `shaders/`, `scripts/hub/`, `scripts/intimacy/`, `scripts/minigames/`, `scripts/combat/`, `scripts/ui/` chưa được khởi tạo — thuộc Task 4 đến Task 16).*
+---
+
+## 2. Danh sách 21 Tasks đã hoàn thiện
+
+1. **Task 1 — Core Data & EventBus:** `StudentData`, `SkillData`, `ItemData`, `RecipeData` và `EventBus` autoload (`tests/test_data_models.gd`).
+2. **Task 2 — Day Cycle & AP System:** `DayCycleManager` autoload với cơ chế AP và giới nghiêm 3:00 AM (`tests/test_day_cycle.gd`).
+3. **Task 3 — Portable Save/Load System:** `SaveManager` autoload hỗ trợ `bonds`, `bonds_exp`, `inventory` qua `EventBus.item_picked_up`, và phát tín hiệu đồng bộ UI khi load (`tests/test_save_load.gd`).
+4. **Task 4 — Portable ModLoader:** `ModLoader` autoload nạp JSON/PCK, giữ danh sách mod đã tắt (`enabled: false`) cho UI quản lý, `get_enabled_mods()`, phân giải đường dẫn model tương đối trong thư mục mod (`tests/test_mod_loader.gd`).
+5. **Task 5 — Hub Sensei Controller (FPS/TPS):** `CameraModeState`, `SenseiController`, `scenes/hub/player_sensei.tscn` đồng bộ `draw_distance` từ `SettingsManager` (`tests/test_camera_mode.gd`).
+6. **Task 6 — Hub Interactables & Zone Transitions:** `InteractableBase`, `SittableChair`, `ToggleLight`, `PickableItem`, `DoorPortal`, `ZoneTransitionManager`, `scenes/hub/loading_screen.tscn` (`tests/test_interactables.gd`).
+7. **Task 7 — Student Intimacy & Direct Gestures:** `GestureReceiver` (tách riêng `register_headpat_stroke` và `register_cheek_pinch`, clamp offset `[0.0, 1.0]`), `BondProgressTracker` (tối đa cấp 100, cổng nhiệm vụ 1–20), `IntimacyManager`, `scenes/intimacy/intimacy_viewport.tscn` (`tests/test_gesture_logic.gd`).
+8. **Task 8 — Relaxed Cooking Minigame:** `IngredientPrepStep`, `CookingManager` (thanh canh điểm vàng dao động không áp lực đếm ngược), `CookingStation`, `scenes/minigames/cooking_station.tscn` (`tests/test_cooking_system.gd`).
+9. **Task 9 — Isometric RTS Camera & Selection:** `SelectionMath`, `UnitSelectionManager`, `RTSCamera3D`, `scenes/combat/combat_camera.tscn` (`tests/test_rts_selection.gd`).
+10. **Task 10 — Combat Unit Base & Projectiles:** `DamageResolver`, `CombatUnit`, `ProjectileManager` (`tests/test_combat_damage.gd`).
+11. **Task 11 — Cover Grid & 4 Role AIs:** `CoverPoint3D`, `RoleAIBase`, `TankerAI`, `DamageDealerAI`, `HealerAI`, `BufferAI` với guard đơn vị đã hạ gục (`IDLE`) và nhường lệnh người chơi (`tests/test_role_ai_decisions.gd`).
+12. **Task 12 — Enemies, Waves & Random Combat Events:** `EnemyUnit`, `EnemyAI`, `WaveSpawner`, `CombatEventManager` (`tests/test_enemy_and_events.gd`).
+13. **Task 13 — EX-Skill System & Cost Bar:** `CostBarManager`, `EXSkillSystem`, `SkillTargetingOverlay` (`tests/test_ex_skill.gd`).
+14. **Task 14 — Multi-Room Dungeon & Roguelike Card Draft:** `DungeonLayoutGenerator`, `RoguelikeCardManager` (hỗ trợ `sync_unlocked_cards()` và `load_cards_from_json()`), `DungeonRoomManager`, `scenes/combat/roguelike_card_draft.tscn` (`tests/test_dungeon_progression.gd`).
+15. **Task 15 — UI System:** `HUDManager` (đồng bộ lại khi `SaveManager.game_loaded`), `PhoneOSManager` (MomoTalk OS 5 tab + hiện con trỏ chuột khi mở), `PauseMenuManager` (signal `settings_requested` + hiện con trỏ chuột khi pause), `ModManagerUI`, `CombatHUD` và 5 scene UI (`tests/test_ui_navigation.gd`).
+16. **Task 16 — Cel-Shading Shaders & Low-End Settings Scaler:** `cel_toon_shader.gdshader`, `outline_shader.gdshader`, `SettingsManager` (`apply_post_processing`, cập nhật `positional_shadow_atlas_size`), `scenes/ui/settings_menu.tscn` (`tests/test_settings_scaler.gd`).
+17. **Task 17 — Bond Quests (Gated 1–20, Max Bond 100):** `QuestData`, `MissionManager` mở khóa bond gate và thẻ roguelike qua `ProgressionManager` khi hoàn thành quest (`tests/test_mission_system.gd`).
+18. **Task 18 — Crafting Chamber, Office Decoration & Active Student Cap:** `FurnitureData`, `CraftingChamberManager`, `OfficeDecorator`, `VisitorSpawner` (giới hạn số học viên hiển thị theo `SettingsManager`, hàng đợi tràn + thưởng quà, xoay vòng theo `day_offset`) (`tests/test_office_and_crafting.gd`).
+19. **Task 19 — Shittim Chest 3D Space (Arona & Plana):** `ShittimChestSpaceManager` nạp/hủy scene theo nhu cầu, tương tác cử chỉ tách biệt và cảnh báo giới nghiêm 3:00 AM, `scenes/hub/shittim_chest_space.tscn` (`tests/test_shittim_chest_space.gd`).
+20. **Task 20 — Multi-Phase Boss & Telegraphed AoE:** `BossUnit` (chuyển pha tại 70% / 30% HP, không chuyển pha sau khi đã bị hạ gục), `TelegraphedAoE` cho phép micro né đòn (`tests/test_boss_encounters.gd`).
+21. **Task 21 — Horizontal Progression & Challenge Modifiers:** `ProgressionManager` giới hạn buff chỉ số vĩnh viễn +10%, mở khóa ngang thẻ roguelike / biến thể kỹ năng và bộ điều chỉnh độ khó (`tests/test_progression_system.gd`).
 
 ---
 
-## 2. Những tính năng đã hoàn thiện (2 / 16 Tasks)
+## 3. Hướng dẫn Chạy Toàn bộ 21 Bộ Test Headless
 
-Cả 2 task đầu tiên đã hoàn thành TDD, qua review chất lượng (verdict `ACCEPT`), commit sạch vào git và test headless đều **PASS**:
+Yêu cầu `godot` (Godot `4.7.2-stable`) nằm trong `PATH`. Chạy từng test hoặc toàn bộ vòng lặp từ thư mục gốc repository:
 
-1. **Task 1 — Core Architecture, EventBus & Data Resource Definitions** (Commit `bdf94db`):
-   * `scripts/data/StudentData.gd`: `CombatRole` (`TANKER`, `DAMAGE_DEALER`, `HEALER`, `BUFFER`), `SquadSlot` (`STRIKER`, `SPECIAL`), đường dẫn dual-model (`normal_model_path`, `chibi_model_path`), chỉ số chiến đấu, bond, `Array[SkillData]`, món ăn/quà yêu thích.
-   * `scripts/data/SkillData.gd`, `ItemData.gd` (`ItemType`: `GIFT`, `FOOD`, `INGREDIENT`, `MATERIAL`, `AP_RESTORE`), `RecipeData.gd`.
-   * `scripts/core/EventBus.gd`: 9 signal toàn cục (`student_bonded`, `ap_changed`, `day_advanced`, `mod_loaded`, `combat_room_cleared`, `item_picked_up`, `combat_event_triggered`, `save_requested`, `load_requested`), đã đăng ký Autoload trong `project.godot`.
-   * Kiểm chứng: `godot --headless -s tests/test_data_models.gd` → `PASS: test_data_models`.
+### PowerShell (Windows)
+```powershell
+Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
+    Write-Host "=== Running $($_.Name) ==="
+    godot --headless -s ("tests/" + $_.Name)
+    if ($LASTEXITCODE -ne 0) { throw "Test failed: $($_.Name)" }
+}
+```
 
-2. **Task 2 — Day Cycle Manager & AP System (kèm giới nghiêm 3:00 AM)** (Commit `591c00e`):
-   * `scripts/core/DayCycleManager.gd`: Quản lý `current_day`, `current_hour`, `current_ap`, `max_ap`, `consume_ap()`, `restore_ap()` (clamp theo `max_ap`), `advance_day()` (reset 7:00 AM, hồi đầy AP), `advance_time()` (xử lý vòng 24h và bắt mốc vượt 3:00 AM để kích hoạt `_force_sleep()`: sang ngày mới, dậy muộn `10:30 AM`, phạt 30% AP còn 70%), `get_time_of_day()`, `is_forced_sleep_hour()`.
-   * Hỗ trợ dependency injection `event_bus` phục vụ test headless sạch; đã đăng ký Autoload trong `project.godot`.
-   * Kiểm chứng: `godot --headless -s tests/test_day_cycle.gd` → `PASS: test_day_cycle`.
-
----
-
-## 3. Những phần đang viết dở hoặc còn lỗi
-
-### Task 3 — Save/Load System (`SaveManager`) đang làm dở (chưa commit, chưa đăng ký Autoload, chưa review)
-Subagent thực hiện Task 3 đã bị hủy giữa chừng, để lại các file untracked (`scripts/core/SaveManager.gd`, `tests/test_save_load.gd`, `tests/debug_save.gd`, `.editorconfig`) cùng các vấn đề cụ thể sau:
-
-1. **Lỗi logic trong `scripts/core/SaveManager.gd` (dòng 118–121):**
-   ```gdscript
-   if state_data.has("ap"):
-       current_ap = int(state_data["ap"])
-   if state_data.has("max_ap"):
-       current_ap = int(state_data["max_ap"])  # LỖI: ghi đè current_ap thay vì gán max_ap!
-   ```
-   Khi deserialize mà không gắn `day_cycle_manager`, `current_ap` bị ghi đè thành `max_ap`, còn thuộc tính `SaveManager.max_ap` không được cập nhật.
-
-2. **Test `tests/test_save_load.gd` đang FAIL và bị treo tiến trình headless:**
-   * Ở dòng 90, `save_mgr.save_game(99)` ghi trực tiếp vào `user://saves/slot_99.json`. Trong môi trường chạy CLI sandboxed, `user://` trỏ ra thư mục `%APPDATA%` trên ổ C (không có quyền ghi), gây ra `ERROR: SaveManager: Failed to write save file: user://saves/slot_99.json (error 7)` và `Assertion failed` ở dòng 91.
-   * Khi `assert()` fail trước `quit(0)`, `SceneTree` trong Godot headless không tự thoát mà treo luôn tiến trình.
-   * *Lưu ý thêm:* Dòng 35 gọi `JSON.parse_string("invalid json string")` vẫn hoạt động đúng logic nhưng làm Godot in thông báo `ERROR: Parse JSON failed` ra stderr — nên dùng `JSON.new()` + `json.parse()` để kiểm tra lỗi sạch sẽ hơn.
-
-3. **Chưa hoàn tất cấu hình & dọn dẹp cho Task 3:**
-   * `SaveManager` **chưa** được đăng ký trong mục `[autoload]` của `project.godot`.
-   * Còn sót file debug tạm `tests/debug_save.gd` (và `.uid`) chưa xóa.
-   * File `.editorconfig` đang ở trạng thái untracked (cần quyết định giữ/commit chung hay loại bỏ).
-   * Chưa có báo cáo `task-3-report.md`, chưa qua bước review Task 3 và chưa ghi nhận vào SDD ledger.
-
-### Các hạng mục chưa bắt đầu (Task 4 → Task 16)
-* **Task 4:** Portable `ModLoader` (`<game_dir>/mods/`, parse JSON & nạp `.pck`, fallback placeholder model).
-* **Task 5–6:** Hub Sensei 3D Controller (FPS/TPS), `ZoneTransitionManager`, DoorPortal & Static Interactables (`PickableItem`, `SittableChair`, `ToggleLight`).
-* **Task 7–8:** Student Intimacy & Direct Gesture (xoa đầu, nhéo má, đút ăn, `BondProgressTracker`) + Relaxed Cooking Minigame.
-* **Task 9–14:** Hệ thống Phó bản Chibi RTS (Isometric Camera, Box-select Micro, `CombatUnit` & `DamageResolver`, 4 Role AIs, Cover Grid, `EnemyUnit`/`WaveSpawner`, `CombatEventManager`, `EXSkillSystem` & Cost Bar, `DungeonLayoutGenerator` & Roguelike Card Draft).
-* **Task 15–16:** UI System (Hub HUD, Combat HUD, MomoTalk Phone OS, Pause Menu, Mod Manager UI) + Cel-Shading Shader & `SettingsManager` tối ưu máy yếu.
-
----
-
-## 4. Đề xuất các bước tiếp theo
-
-Sau khi bạn xác nhận bản tóm tắt này, đề xuất thứ tự triển khai như sau:
-
-1. **Hoàn thiện và chốt dứt điểm Task 3 (`SaveManager`):**
-   * Sửa lỗi dòng 121 (`max_ap = int(state_data["max_ap"])`) và đổi `json_to_state()` sang `JSON.new().parse()` để không spam lỗi console khi gặp JSON hỏng.
-   * Cập nhật `tests/test_save_load.gd` để gán `save_mgr.save_dir` trỏ vào một thư mục tạm trong workspace (và dọn sạch sau khi chạy test), bổ sung test kiểm tra `SaveManager.max_ap` và đảm bảo thoát cleanly.
-   * Xóa file debug thừa `tests/debug_save.gd` (và `.uid`), đăng ký `SaveManager` vào `[autoload]` của `project.godot`.
-   * Chạy lại toàn bộ 3 test (`test_data_models`, `test_day_cycle`, `test_save_load`), review Task 3, commit và cập nhật SDD ledger.
-   * *(Gợi ý tùy chọn)*: Cân nhắc xem thư mục save game thực tế khi phát hành có nên đi theo hướng **portable** giống thư mục `mods/` (`<game_dir>/saves/`) hay giữ nguyên `user://saves` theo kế hoạch hiện tại.
-
-2. **Tiếp tục thực thi nối tiếp từ Task 4 trở đi theo kế hoạch 16 Task:**
-   * **Nhóm nền tảng (Task 4):** Xây `ModLoader` hoàn thiện lớp `Core/`.
-   * **Nhóm Hub & Đời sống Sensei (Task 5 → Task 8):** Dựng Controller FPS/TPS, chuyển cảnh, tương tác vật thể/học sinh và nấu nướng.
-   * **Nhóm Phó bản Chiến thuật Chibi (Task 9 → Task 14):** Dựng Camera RTS, Combat core, 4 Role AIs, Kẻ địch + Biến cố ngẫu nhiên, EX-Skill và Multi-room Roguelike.
-   * **Nhóm Giao diện & Tối ưu (Task 15 → Task 16):** Dựng MomoTalk OS, HUD, Cel-shader và Settings cho máy yếu.
-
-3. **Xác nhận phương thức làm việc tiếp theo:**
-   * Tiếp tục theo mô hình **Subagent-driven** (từng task một + reviewer kiểm định trước khi sang task tiếp theo) hay chuyển sang **Native** (triển khai trực tiếp trong phiên này).
+### Danh sách 21 bộ test
+* `godot --headless -s tests/test_data_models.gd`
+* `godot --headless -s tests/test_day_cycle.gd`
+* `godot --headless -s tests/test_save_load.gd`
+* `godot --headless -s tests/test_mod_loader.gd`
+* `godot --headless -s tests/test_camera_mode.gd`
+* `godot --headless -s tests/test_interactables.gd`
+* `godot --headless -s tests/test_gesture_logic.gd`
+* `godot --headless -s tests/test_cooking_system.gd`
+* `godot --headless -s tests/test_rts_selection.gd`
+* `godot --headless -s tests/test_combat_damage.gd`
+* `godot --headless -s tests/test_role_ai_decisions.gd`
+* `godot --headless -s tests/test_enemy_and_events.gd`
+* `godot --headless -s tests/test_ex_skill.gd`
+* `godot --headless -s tests/test_dungeon_progression.gd`
+* `godot --headless -s tests/test_ui_navigation.gd`
+* `godot --headless -s tests/test_settings_scaler.gd`
+* `godot --headless -s tests/test_mission_system.gd`
+* `godot --headless -s tests/test_office_and_crafting.gd`
+* `godot --headless -s tests/test_shittim_chest_space.gd`
+* `godot --headless -s tests/test_boss_encounters.gd`
+* `godot --headless -s tests/test_progression_system.gd`

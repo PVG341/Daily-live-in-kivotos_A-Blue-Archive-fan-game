@@ -97,6 +97,17 @@ func _run_tests() -> void:
 	check(is_equal_approx(float(p3.get("warn_duration", 0.0)), 1.1), "Phase 3 warn_duration must be 1.1")
 	check(int(p3.get("damage", 0)) == 350, "Phase 3 damage must be round(200 * 1.75) == 350")
 
+	# Lethal damage on a Phase 1 boss must emit unit_died and NOT emit phase_changed
+	var lethal_boss = boss_script.new()
+	var lethal_phases: Array[int] = []
+	var lethal_died := [false]
+	lethal_boss.phase_changed.connect(func(p: int): lethal_phases.append(p))
+	lethal_boss.unit_died.connect(func(_u): lethal_died[0] = true)
+	lethal_boss.take_damage(15000)
+	check(lethal_boss.is_alive == false and lethal_died[0] == true, "Lethal damage must kill boss and emit unit_died")
+	check(lethal_phases.is_empty(), "Lethal damage must NOT emit phase_changed after unit_died")
+	lethal_boss.free()
+
 	# 3. TelegraphedAoE tests with Dictionary units
 	var aoe = aoe_script.new()
 	check(aoe is Node3D, "TelegraphedAoE must extend Node3D")

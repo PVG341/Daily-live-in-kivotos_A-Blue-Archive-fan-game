@@ -34,6 +34,7 @@ func _init() -> void:
 func _ready() -> void:
 	_ensure_input_map()
 	_cache_nodes()
+	_apply_settings_draw_distance()
 	if interact_raycast:
 		interact_raycast.target_position = Vector3(0.0, 0.0, -interact_distance)
 		interact_raycast.collide_with_areas = true
@@ -131,3 +132,25 @@ func _sync_cameras() -> void:
 		fps_camera.current = fps_active
 	if tps_camera:
 		tps_camera.current = not fps_active
+
+func _exit_tree() -> void:
+	var sm := get_node_or_null("/root/SettingsManager")
+	if sm != null and sm.has_signal("settings_changed") and sm.settings_changed.is_connected(_apply_settings_draw_distance):
+		sm.settings_changed.disconnect(_apply_settings_draw_distance)
+
+func _apply_settings_draw_distance() -> void:
+	if not is_inside_tree():
+		return
+	var sm := get_node_or_null("/root/SettingsManager")
+	if sm == null:
+		return
+	var draw_dist_val: Variant = sm.get(&"current_draw_distance")
+	if draw_dist_val == null:
+		return
+	var draw_dist: float = float(draw_dist_val)
+	if fps_camera != null:
+		fps_camera.far = draw_dist
+	if tps_camera != null:
+		tps_camera.far = draw_dist
+	if sm.has_signal("settings_changed") and not sm.settings_changed.is_connected(_apply_settings_draw_distance):
+		sm.settings_changed.connect(_apply_settings_draw_distance)

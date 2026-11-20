@@ -2,6 +2,8 @@
 extends SceneTree
 
 var _failed: bool = false
+var _completed: bool = false
+var _ran: bool = false
 
 func check(cond: bool, msg: String) -> bool:
 	if not cond:
@@ -11,15 +13,19 @@ func check(cond: bool, msg: String) -> bool:
 		return false
 	return true
 
-func _init() -> void:
+func _process(_delta: float) -> bool:
+	if _ran:
+		return true
+	_ran = true
 	_run_tests()
 
-	if _failed:
+	if _failed or not _completed:
 		quit(1)
-		return
+		return true
 
 	print("PASS: test_camera_mode")
 	quit(0)
+	return true
 
 func _run_tests() -> void:
 	# 1. Test CameraModeState
@@ -157,4 +163,16 @@ func _run_tests() -> void:
 	instance.toggle_camera_mode()
 	check(fps_cam.current == false and tps_cam.current == true, "Second toggle must restore fps_cam.current=false and tps_cam.current=true")
 
+	# Verify SettingsManager draw distance sync on SenseiController._ready()
+	var sm := root.get_node_or_null("SettingsManager")
+	if check(sm != null, "SettingsManager autoload must exist"):
+		var orig_dist: float = sm.current_draw_distance
+		sm.apply_draw_distance(175.0)
+		root.add_child(instance)
+		check(is_equal_approx(fps_cam.far, 175.0), "SenseiController._ready must apply SettingsManager.current_draw_distance to fps_camera.far")
+		check(is_equal_approx(tps_cam.far, 175.0), "SenseiController._ready must apply SettingsManager.current_draw_distance to tps_camera.far")
+		root.remove_child(instance)
+		sm.apply_draw_distance(orig_dist)
+
 	instance.free()
+	_completed = true
