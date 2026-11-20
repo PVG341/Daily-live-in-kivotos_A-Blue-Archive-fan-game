@@ -1,0 +1,25 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/RTSCamera3D.gd" id="1_rts_cam"]
+
+[node name="CombatCameraRig" type="Node3D"]
+transform = Transform3D(0.81650, 0, 0.57735, 0, 1, 0, -0.57735, 0, 0.81650, 0, 0, 0)
+script = ExtResource("1_rts_cam")
+
+[node name="PitchPivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 0, 0)
+
+[node name="IsometricCamera" type="Camera3D" parent="PitchPivot"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 12)
+current = true
+
+[node name="SelectionOverlay" type="CanvasLayer" parent="."]
+
+[node name="SelectionBoxControl" type="Control" parent="SelectionOverlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
