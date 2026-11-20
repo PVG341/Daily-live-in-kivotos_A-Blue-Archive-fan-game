@@ -112,3 +112,27 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 * `godot --headless -s tests/test_shittim_chest_space.gd`
 * `godot --headless -s tests/test_boss_encounters.gd`
 * `godot --headless -s tests/test_progression_system.gd`
+
+---
+
+## 5. Knowledge Graph & Tiết kiệm Token (Graphify Godot)
+
+Dự án đã được tích hợp bộ công cụ **`graphify-godot`** (`graphifyy==0.5.0+godot1`), cho phép chuyển đổi toàn bộ mã nguồn GDScript (`.gd`) và các Scene (`.tscn`) thành Đồ thị Tri thức (Knowledge Graph) offline bằng AST Tree-sitter (0 token API).
+
+* **Đầu ra trích xuất:** Thư mục `graphify-out/` gồm:
+  * `graph.json` (3.391 nodes, 10.056 edges, 29 communities)
+  * `graph.html` (Giao diện trực quan hóa đồ thị tương tác trong trình duyệt)
+  * `GRAPH_REPORT.md` (Báo cáo tóm tắt các nút trung tâm / God Nodes và cộng đồng mã nguồn)
+* **Bộ nhớ đệm AST:** Được lưu trữ cục bộ tại `.graphify_cache/` (đã thêm vào `.gitignore`).
+* **Lệnh cập nhật đồ thị (0 token):**
+  ```powershell
+  $env:TREE_SITTER_LANGUAGE_PACK_CACHE_DIR='d:/This PC/Project/test/.graphify_cache'
+  graphify update .
+  ```
+* **Lệnh truy vấn nhanh cho Agent mới (Tiết kiệm token khảo sát):**
+  ```powershell
+  graphify explain "<NodeName.gd>"     # Ví dụ: graphify explain "DayCycleManager.gd"
+  graphify query "<Câu hỏi về hệ thống>"  # Giới hạn chặt chẽ trong ngân sách 2000 tokens
+  graphify path "<NodeA>" "<NodeB>"       # Tìm đường đi ngắn nhất giữa 2 thành phần
+  ```
+

@@ -4,3 +4,6 @@
 .superpowers/
 saves/
 .test_tmp/
+graphify-out/
+.graphify_cache/
+
