@@ -20,6 +20,7 @@ EventBus="*res://scripts/core/EventBus.gd"
 DayCycleManager="*res://scripts/core/DayCycleManager.gd"
 SaveManager="*res://scripts/core/SaveManager.gd"
 ModLoader="*res://scripts/core/ModLoader.gd"
+ZoneTransitionManager="*res://scripts/hub/ZoneTransitionManager.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
