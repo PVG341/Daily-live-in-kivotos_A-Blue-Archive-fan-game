@@ -1,0 +1,147 @@
+[gd_scene format=3]
+
+[sub_resource type="GDScript" id="GDScript_settings_menu"]
+script/source = "extends Control
+
+@onready var render_scale_slider: HSlider = $VBoxContainer/RenderScaleSlider
+@onready var draw_distance_slider: HSlider = $VBoxContainer/DrawDistanceSlider
+@onready var shadow_tier_option: OptionButton = $VBoxContainer/ShadowTierOption
+@onready var max_students_spin: SpinBox = $VBoxContainer/MaxActiveStudentsSpinBox
+@onready var bloom_checkbox: CheckBox = $VBoxContainer/BloomCheckBox
+@onready var dof_checkbox: CheckBox = $VBoxContainer/DOFCheckBox
+@onready var particles_checkbox: CheckBox = $VBoxContainer/ParticlesCheckBox
+@onready var apply_button: Button = $VBoxContainer/ApplyButton
+@onready var reset_button: Button = $VBoxContainer/ResetButton
+
+func _ready() -> void:
+	if shadow_tier_option.item_count == 0:
+		shadow_tier_option.add_item(\"Off\", 0)
+		shadow_tier_option.add_item(\"Low\", 1)
+		shadow_tier_option.add_item(\"Medium\", 2)
+		shadow_tier_option.add_item(\"High\", 3)
+
+	apply_button.pressed.connect(_on_apply_pressed)
+	reset_button.pressed.connect(_on_reset_pressed)
+	_sync_from_manager()
+
+func _get_settings_manager() -> Node:
+	return get_node_or_null(\"/root/SettingsManager\")
+
+func _sync_from_manager() -> void:
+	var mgr: Node = _get_settings_manager()
+	if mgr == null:
+		return
+	render_scale_slider.value = mgr.current_render_scale
+	draw_distance_slider.value = mgr.current_draw_distance
+	shadow_tier_option.selected = clampi(mgr.shadow_tier, 0, 3)
+	max_students_spin.value = mgr.max_active_students
+	bloom_checkbox.button_pressed = mgr.bloom_enabled
+	dof_checkbox.button_pressed = mgr.dof_enabled
+	particles_checkbox.button_pressed = mgr.particles_enabled
+
+func _on_apply_pressed() -> void:
+	var mgr: Node = _get_settings_manager()
+	if mgr == null:
+		return
+	mgr.apply_render_scale(render_scale_slider.value)
+	mgr.apply_draw_distance(draw_distance_slider.value)
+	mgr.apply_shadow_tier(shadow_tier_option.selected)
+	mgr.apply_max_active_students(int(max_students_spin.value))
+	mgr.bloom_enabled = bloom_checkbox.button_pressed
+	mgr.dof_enabled = dof_checkbox.button_pressed
+	mgr.particles_enabled = particles_checkbox.button_pressed
+	mgr.save_settings()
+
+func _on_reset_pressed() -> void:
+	var mgr: Node = _get_settings_manager()
+	if mgr == null:
+		return
+	mgr.reset_to_defaults()
+	_sync_from_manager()
+	mgr.save_settings()
+"
+
+[node name="SettingsMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = SubResource("GDScript_settings_menu")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -180.0
+offset_top = -180.0
+offset_right = 180.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+
+[node name="RenderScaleLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Render Scale"
+
+[node name="RenderScaleSlider" type="HSlider" parent="VBoxContainer"]
+layout_mode = 2
+min_value = 0.5
+max_value = 1.0
+step = 0.05
+value = 1.0
+
+[node name="DrawDistanceLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Draw Distance"
+
+[node name="DrawDistanceSlider" type="HSlider" parent="VBoxContainer"]
+layout_mode = 2
+min_value = 50.0
+max_value = 200.0
+step = 5.0
+value = 120.0
+
+[node name="ShadowTierLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Shadow Quality"
+
+[node name="ShadowTierOption" type="OptionButton" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="MaxActiveStudentsLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Max Active Students"
+
+[node name="MaxActiveStudentsSpinBox" type="SpinBox" parent="VBoxContainer"]
+layout_mode = 2
+min_value = 1.0
+max_value = 10.0
+value = 5.0
+
+[node name="BloomCheckBox" type="CheckBox" parent="VBoxContainer"]
+layout_mode = 2
+button_pressed = true
+text = "Bloom"
+
+[node name="DOFCheckBox" type="CheckBox" parent="VBoxContainer"]
+layout_mode = 2
+text = "Depth of Field"
+
+[node name="ParticlesCheckBox" type="CheckBox" parent="VBoxContainer"]
+layout_mode = 2
+button_pressed = true
+text = "Particles"
+
+[node name="ApplyButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Apply"
+
+[node name="ResetButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Reset"
