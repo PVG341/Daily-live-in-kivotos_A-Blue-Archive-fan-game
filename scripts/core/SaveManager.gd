@@ -36,6 +36,9 @@ func _init() -> void:
 func _ready() -> void:
 	_connect_event_bus()
 
+func _exit_tree() -> void:
+	_disconnect_event_bus(_get_event_bus())
+
 func get_save_root_dir() -> String:
 	var portable_dir: String
 	if OS.has_feature("editor"):
@@ -72,8 +75,19 @@ func _is_dir_writable(dir_path: String) -> bool:
 	return true
 
 func set_event_bus(bus: Node) -> void:
+	_disconnect_event_bus(_get_event_bus())
 	event_bus = bus
 	_connect_event_bus()
+
+func _disconnect_event_bus(bus: Node = null) -> void:
+	var target_bus: Node = bus if bus != null else event_bus
+	if target_bus != null and is_instance_valid(target_bus):
+		if target_bus.has_signal("save_requested") and target_bus.save_requested.is_connected(_on_save_requested):
+			target_bus.save_requested.disconnect(_on_save_requested)
+		if target_bus.has_signal("load_requested") and target_bus.load_requested.is_connected(_on_load_requested):
+			target_bus.load_requested.disconnect(_on_load_requested)
+		if target_bus.has_signal("item_picked_up") and target_bus.item_picked_up.is_connected(_on_item_picked_up):
+			target_bus.item_picked_up.disconnect(_on_item_picked_up)
 
 func _connect_event_bus() -> void:
 	var bus = _get_event_bus()

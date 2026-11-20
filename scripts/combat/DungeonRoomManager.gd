@@ -14,6 +14,12 @@ var current_room_node: Node = null
 
 ## Initializes a dungeon run with the given layout and emits room_loaded for room 0 if non-empty.
 func start_dungeon(p_layout: Array[Dictionary]) -> void:
+	if current_room_node != null and is_instance_valid(current_room_node):
+		if current_room_node.is_inside_tree():
+			current_room_node.queue_free()
+		else:
+			current_room_node.free()
+	current_room_node = null
 	layout = p_layout.duplicate(true)
 	current_room_index = 0
 	is_draft_open = false
@@ -71,3 +77,10 @@ func _get_event_bus() -> Node:
 	if loop != null and loop.root != null:
 		return loop.root.get_node_or_null("EventBus")
 	return null
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		if current_room_node != null and is_instance_valid(current_room_node):
+			if not current_room_node.is_inside_tree() and not current_room_node.is_queued_for_deletion():
+				current_room_node.free()
+			current_room_node = null

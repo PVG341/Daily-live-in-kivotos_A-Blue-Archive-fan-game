@@ -98,6 +98,17 @@ func exit_space() -> void:
 	gesture_receiver.reset()
 	space_exited.emit()
 
+func _exit_tree() -> void:
+	_disconnect_event_bus()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_disconnect_event_bus()
+		if loaded_space_instance != null and is_instance_valid(loaded_space_instance):
+			if loaded_space_instance.get_parent() != self:
+				loaded_space_instance.free()
+			loaded_space_instance = null
+
 func get_mascot_greeting(mascot_id: String, current_hour: float = 8.0) -> String:
 	var key: String = mascot_id.to_lower()
 	if not MASCOT_GREETINGS.has(key):

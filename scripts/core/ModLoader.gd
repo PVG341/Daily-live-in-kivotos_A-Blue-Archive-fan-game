@@ -32,6 +32,7 @@ var event_bus: Node = null
 var loaded_mods: Array[Dictionary] = []
 var loaded_students: Dictionary = {}
 var _mod_enabled_states: Dictionary = {}
+var _mounted_pcks: Dictionary = {}
 
 func _init() -> void:
 	mod_root_dir = get_mod_root_dir()
@@ -166,7 +167,12 @@ func resolve_model_path(path: String, is_chibi: bool = false) -> String:
 func load_pck_package(path: String) -> bool:
 	if path.is_empty() or not FileAccess.file_exists(path):
 		return false
-	return ProjectSettings.load_resource_pack(path)
+	if _mounted_pcks.has(path):
+		return true
+	var ok: bool = ProjectSettings.load_resource_pack(path)
+	if ok:
+		_mounted_pcks[path] = true
+	return ok
 
 func get_loaded_mods() -> Array[Dictionary]:
 	var copy: Array[Dictionary] = []

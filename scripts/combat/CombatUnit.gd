@@ -80,6 +80,8 @@ func die() -> void:
 		return
 	is_alive = false
 	has_player_order = false
+	current_order_type = ""
+	order_target_node = null
 	unit_died.emit(self)
 
 ## Clears the active player order and emits order_completed.

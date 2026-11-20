@@ -35,10 +35,26 @@ func set_active_buff_ids(buff_ids: Array[String]) -> void:
 	active_buff_ids = buff_ids.duplicate()
 	_refresh_buff_row()
 
+func clear_hud() -> void:
+	striker_hp.clear()
+	active_buff_ids.clear()
+	_refresh_striker_portraits()
+	_refresh_buff_row()
+
 func _refresh_striker_portraits() -> void:
 	var portraits := find_child("StrikerPortraits", true, false) as Container
 	if portraits == null:
 		return
+	for child in portraits.get_children():
+		var child_name: String = str(child.name)
+		var keep: bool = false
+		for sid in striker_hp:
+			if child_name == "Portrait_%s" % sid:
+				keep = true
+				break
+		if not keep:
+			portraits.remove_child(child)
+			child.free()
 	for sid in striker_hp:
 		var hp_vec: Vector2i = striker_hp[sid]
 		var existing := portraits.get_node_or_null("Portrait_%s" % sid) as Label

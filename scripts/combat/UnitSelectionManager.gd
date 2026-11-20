@@ -13,8 +13,17 @@ var selection_math: SelectionMathScript = null
 func _init() -> void:
 	selection_math = SelectionMathScript.new()
 
+## Removes null or freed instances from selected_units.
+func prune_invalid_units() -> void:
+	var valid: Array[Node3D] = []
+	for u in selected_units:
+		if u != null and is_instance_valid(u):
+			valid.append(u)
+	selected_units = valid
+
 ## Selects a unit; when append is false, replaces the current selection.
 func select_unit(unit: Node3D, append: bool = true) -> void:
+	prune_invalid_units()
 	if unit == null or not is_instance_valid(unit):
 		return
 	if not append:
@@ -25,6 +34,7 @@ func select_unit(unit: Node3D, append: bool = true) -> void:
 
 ## Removes a single unit from the current selection.
 func deselect_unit(unit: Node3D) -> void:
+	prune_invalid_units()
 	if unit == null:
 		return
 	if selected_units.has(unit):
@@ -40,6 +50,7 @@ func deselect_all() -> void:
 
 ## Projects 3D units through camera and selects those inside the normalized screen_rect.
 func box_select(screen_rect: Rect2, camera: Camera3D, units: Array) -> Array[Node3D]:
+	prune_invalid_units()
 	deselect_all()
 	if camera == null or not is_instance_valid(camera) or not camera.is_inside_tree():
 		return selected_units
@@ -60,6 +71,7 @@ func box_select(screen_rect: Rect2, camera: Camera3D, units: Array) -> Array[Nod
 
 ## Headless-friendly box selection using precomputed unit -> screen Vector2 coordinates.
 func box_select_screen_points(screen_rect: Rect2, unit_screen_map: Dictionary) -> Array[Node3D]:
+	prune_invalid_units()
 	deselect_all()
 	var normalized: Rect2 = selection_math.normalize_selection_rect(screen_rect.position, screen_rect.end)
 	for candidate in unit_screen_map.keys():

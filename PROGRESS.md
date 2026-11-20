@@ -1,8 +1,8 @@
 # PROGRESS.md — Blue Archive 3D Fan Game (Godot 4.7)
 
 * **Ngày cập nhật:** 2026-11-20
-* **Nhánh Git hiện tại:** `master`
-* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm vòng Final Review Fix Wave tích hợp liên phân hệ), toàn bộ **21/21 bộ test headless** đều **PASS**.
+* **Nhánh Git hiện tại:** `main`
+* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm vòng Final Review Fix Wave và Memory/RAM Leak Audit), toàn bộ **22/22 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
 * **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript, addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
 * **Tài liệu nguồn:**
   * Design Spec: [docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md](docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md)
@@ -90,7 +90,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 }
 ```
 
-### Danh sách 21 bộ test
+### Danh sách 22 bộ test
 * `godot --headless -s tests/test_data_models.gd`
 * `godot --headless -s tests/test_day_cycle.gd`
 * `godot --headless -s tests/test_save_load.gd`
@@ -112,6 +112,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 * `godot --headless -s tests/test_shittim_chest_space.gd`
 * `godot --headless -s tests/test_boss_encounters.gd`
 * `godot --headless -s tests/test_progression_system.gd`
+* `godot --headless -s tests/test_memory_leaks.gd`
 
 ---
 
@@ -135,4 +136,17 @@ Dự án đã được tích hợp bộ công cụ **`graphify-godot`** (`graphi
   graphify query "<Câu hỏi về hệ thống>"  # Giới hạn chặt chẽ trong ngân sách 2000 tokens
   graphify path "<NodeA>" "<NodeB>"       # Tìm đường đi ngắn nhất giữa 2 thành phần
   ```
+
+---
+
+## 6. Kiểm toán & Chống Rò rỉ Bộ nhớ / Tràn RAM (Memory & Leak Audit)
+
+Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ test đã được kiểm toán vòng đời bộ nhớ (`NOTIFICATION_PREDELETE`, `_exit_tree()`, dọn dẹp tham chiếu và node mồ côi):
+* **`ProjectileManager.gd`:** Thêm giới hạn vòng đời `MAX_PROJECTILE_LIFETIME = 15.0`, loại bỏ ngay đạn có `speed <= 0.0`, giải phóng tham chiếu `source` / `target_unit` khi chạm đích hoặc hết hạn, và bổ sung `clear_projectiles()`.
+* **`ShittimChestSpaceManager.gd` & `DungeonRoomManager.gd`:** Bổ sung bảo vệ `NOTIFICATION_PREDELETE` và `_exit_tree()` để tự động giải phóng scene `loaded_space_instance` / `current_room_node` còn sót lại nếu manager bị hủy đột ngột, tránh Orphan Node leak.
+* **`HUDManager.gd` & `CombatHUD.gd`:** Ngắt kết nối tín hiệu `EventBus` / `SaveManager` trong `_exit_tree()`; tự động xóa các `Portrait_<sid>` cũ trong `StrikerPortraits` và cung cấp `clear_hud()`.
+* **`CoverPoint3D.gd`, `CombatUnit.gd` & `UnitSelectionManager.gd`:** `CoverPoint3D` tự dọn occupant đã chết hoặc đã bị giải phóng (`_sanitize_occupant()`); `CombatUnit.die()` xóa `order_target_node` & `current_order_type`; `UnitSelectionManager` cung cấp `prune_invalid_units()`.
+* **`SaveManager.gd` & `ModLoader.gd`:** `SaveManager` ngắt kết nối `EventBus` cũ khi đổi bus (`set_event_bus`) và khi rời tree (`_exit_tree`); `ModLoader` theo dõi `_mounted_pcks` để tránh nạp trùng gói `.pck` vào RAM khi quét lại mod.
+* **Stress Test Tự động:** `tests/test_memory_leaks.gd` kiểm chứng trực tiếp `Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT) == 0` sau hàng loạt chu kỳ cấp phát/giải phóng.
+
 

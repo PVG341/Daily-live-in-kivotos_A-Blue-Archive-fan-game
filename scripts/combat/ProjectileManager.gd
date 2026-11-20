@@ -2,6 +2,8 @@
 class_name ProjectileManager
 extends Node
 
+const MAX_PROJECTILE_LIFETIME: float = 15.0
+
 var active_projectiles: Array[Dictionary] = []
 
 ## Spawns a tracked projectile moving from origin toward target_pos.
@@ -22,6 +24,7 @@ func spawn_projectile(
 		"source": source,
 		"target_unit": target_unit,
 		"active": true,
+		"elapsed": 0.0,
 	}
 	active_projectiles.append(proj)
 	return proj
@@ -35,6 +38,12 @@ func tick_projectiles(delta: float) -> int:
 	for proj in active_projectiles:
 		if not bool(proj.get("active", false)):
 			continue
+		proj["elapsed"] = float(proj.get("elapsed", 0.0)) + clamped_delta
+		if float(proj.get("speed", 0.0)) <= 0.0 or float(proj["elapsed"]) > MAX_PROJECTILE_LIFETIME:
+			proj["active"] = false
+			proj["source"] = null
+			proj["target_unit"] = null
+			continue
 		var pos: Vector3 = proj["position"]
 		var target_pos: Vector3 = proj["target_pos"]
 		var step: float = maxf(0.0, float(proj["speed"]) * clamped_delta)
@@ -47,6 +56,8 @@ func tick_projectiles(delta: float) -> int:
 			var target_unit: Variant = proj.get("target_unit", null)
 			if target_unit != null and is_instance_valid(target_unit) and target_unit.has_method("take_damage"):
 				target_unit.take_damage(int(proj["damage"]), proj.get("source", null))
+			proj["source"] = null
+			proj["target_unit"] = null
 			hits_resolved += 1
 		else:
 			proj["position"] = pos + (to_target / dist) * step
@@ -54,6 +65,14 @@ func tick_projectiles(delta: float) -> int:
 
 	active_projectiles = remaining
 	return hits_resolved
+
+## Clears all tracked projectiles and releases any held object references.
+func clear_projectiles() -> void:
+	for proj in active_projectiles:
+		proj["active"] = false
+		proj["source"] = null
+		proj["target_unit"] = null
+	active_projectiles.clear()
 
 ## Immediately applies hitscan damage to target if valid and damageable.
 func spawn_hitscan(_origin: Vector3, target: Object, damage: int, source: Object = null) -> int:

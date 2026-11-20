@@ -80,3 +80,17 @@ func _get_event_bus() -> Node:
 	if is_inside_tree():
 		return get_node_or_null("/root/EventBus")
 	return null
+
+func _exit_tree() -> void:
+	_disconnect_signals()
+
+func _disconnect_signals() -> void:
+	var bus := _get_event_bus()
+	if bus != null:
+		if bus.has_signal("ap_changed") and bus.ap_changed.is_connected(update_ap):
+			bus.ap_changed.disconnect(update_ap)
+		if bus.has_signal("day_advanced") and bus.day_advanced.is_connected(update_day):
+			bus.day_advanced.disconnect(update_day)
+	var sm := get_node_or_null("/root/SaveManager") if is_inside_tree() else null
+	if sm != null and sm.has_signal("game_loaded") and sm.game_loaded.is_connected(_on_game_loaded):
+		sm.game_loaded.disconnect(_on_game_loaded)

@@ -19,9 +19,23 @@ func get_cover_direction() -> Vector3:
 		return Vector3.FORWARD
 	return cover_direction.normalized()
 
+func _sanitize_occupant() -> void:
+	if occupant == null:
+		is_occupied = false
+		return
+	if not is_instance_valid(occupant):
+		is_occupied = false
+		occupant = null
+		return
+	var alive_val: Variant = occupant.get(&"is_alive")
+	if alive_val != null and not bool(alive_val):
+		is_occupied = false
+		occupant = null
+
 ## Attempts to reserve this cover point for the given unit; fails if already held by another unit.
 func claim(unit: Object) -> bool:
-	if unit == null:
+	_sanitize_occupant()
+	if unit == null or not is_instance_valid(unit):
 		return false
 	if is_occupied and occupant != unit:
 		return false
@@ -31,6 +45,7 @@ func claim(unit: Object) -> bool:
 
 ## Releases occupancy when called by the current occupant or with no unit specified.
 func release(unit: Object = null) -> void:
+	_sanitize_occupant()
 	if unit == null or occupant == unit:
 		is_occupied = false
 		occupant = null
