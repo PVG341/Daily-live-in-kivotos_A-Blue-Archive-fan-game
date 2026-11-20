@@ -525,7 +525,11 @@ git commit -m "feat(hub): add zone transition system, interactable objects (sit,
   - `reset()`
   - Signals: `headpat_completed(satisfaction: float)`, `cheek_pinched(offset: float)`, `food_fed(item_id: String, reaction: String)`
 - Produces: `BondProgressTracker`:
-  - `add_bond_exp(student_id: String, amount: int)` — handles level-up thresholds.
+  - `MAX_BOND_LEVEL: int = 100`
+  - `DEFAULT_QUEST_GATE_LEVELS: Array[int] = [5, 10, 15, 20]` (only gated up to level 20 by default; extensible for >20 via `register_quest_gate(student_id, level)`).
+  - `add_bond_exp(student_id: String, amount: int)` — handles level-up thresholds up to `MAX_BOND_LEVEL`, pausing level-up at a gate level until `complete_bond_quest_gate(student_id, level)` is called.
+  - `is_bond_gate_locked(student_id: String) -> bool`
+  - `complete_bond_quest_gate(student_id: String, level: int)`
   - `get_bond_level(student_id: String) -> int`
   - `get_bond_exp(student_id: String) -> int`
   - `get_level_up_threshold(level: int) -> int`
@@ -1441,3 +1445,397 @@ Add `SettingsManager="*res://scripts/core/SettingsManager.gd"` to `[autoload]`.
 git add shaders/ scripts/core/SettingsManager.gd scenes/ui/settings_menu.tscn tests/test_settings_scaler.gd project.godot
 git commit -m "feat(graphics): add cel-toon shader, outline shader, and performance settings scaler"
 ```
+
+---
+
+### Task 17: Student Bond Quests & Mission System
+
+**Files:**
+- Create: `scripts/data/QuestData.gd`
+- Create: `scripts/core/MissionManager.gd`
+- Create: `tests/test_mission_system.gd`
+
+**Interfaces:**
+- Consumes: `EventBus`, `BondProgressTracker`, `StudentData`.
+- Produces: `QuestData` (extends `Resource`, `class_name QuestData`):
+  - `id: String`, `title: String`, `description: String`, `student_id: String`
+  - `required_bond_level: int` (e.g., 5, 10, 15, 20; extensible for >20 in future updates)
+  - `objective_type: String` ("CLEAR_DUNGEON", "COOK_DISH", "GIFT_ITEM", "INTERACT")
+  - `target_id: String`, `target_count: int`
+  - `reward_items: Dictionary`, `unlocks_roguelike_card_id: String`
+- Produces: `MissionManager`:
+  - `register_quest(quest: QuestData)`
+  - `get_available_quests(student_id: String, current_bond_level: int) -> Array[QuestData]`
+  - `record_objective_progress(objective_type: String, target_id: String, count: int)`
+  - `complete_quest(quest_id: String, bond_tracker: RefCounted) -> bool` — unlocks the bond gate on `BondProgressTracker` when a milestone quest (levels 5, 10, 15, 20) completes.
+
+- [ ] **Step 1: Write failing test for bond milestone gating (1–20 gated, 21–100 free) and quest completion**
+
+```gdscript
+# tests/test_mission_system.gd
+extends SceneTree
+
+func _init():
+    var tracker = preload("res://scripts/intimacy/BondProgressTracker.gd").new()
+    var mission_mgr = preload("res://scripts/core/MissionManager.gd").new()
+
+    var quest = QuestData.new()
+    quest.id = "shiroko_bond_5"
+    quest.student_id = "shiroko"
+    quest.required_bond_level = 5
+    quest.objective_type = "CLEAR_DUNGEON"
+    quest.target_id = "abydos_bank_robbery"
+    quest.target_count = 1
+    mission_mgr.register_quest(quest)
+
+    # Give huge EXP: should stop at gate level 5 until quest is completed
+    tracker.add_bond_exp("shiroko", 50000)
+    assert(tracker.get_bond_level("shiroko") == 5, "Must pause at bond level 5 gate")
+    assert(tracker.is_bond_gate_locked("shiroko") == true, "Gate must report locked at level 5")
+
+    # Complete objective & quest
+    mission_mgr.record_objective_progress("CLEAR_DUNGEON", "abydos_bank_robbery", 1)
+    assert(mission_mgr.complete_quest("shiroko_bond_5", tracker) == true, "Quest completion must succeed")
+    assert(tracker.is_bond_gate_locked("shiroko") == false, "Gate 5 must unlock after quest")
+
+    # Unlock gates 10, 15, 20 and verify free leveling from 21 up to cap 100
+    for gate_lvl in [10, 15, 20]:
+        tracker.complete_bond_quest_gate("shiroko", gate_lvl)
+    tracker.add_bond_exp("shiroko", 10000000)
+    assert(tracker.get_bond_level("shiroko") == 100, "Bond level must reach max cap 100 freely after level 20")
+
+    print("PASS: test_mission_system")
+    quit(0)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `godot --headless -s tests/test_mission_system.gd`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement QuestData.gd and MissionManager.gd**
+
+Implement `QuestData` resource and `MissionManager` tracking objective progress and unlocking `BondProgressTracker` milestone gates (`[5, 10, 15, 20]` by default, capped at `MAX_BOND_LEVEL = 100`).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `godot --headless -s tests/test_mission_system.gd`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/data/QuestData.gd scripts/core/MissionManager.gd scripts/intimacy/BondProgressTracker.gd tests/test_mission_system.gd
+git commit -m "feat(missions): add bond quest gating (levels 1-20, max 100) and MissionManager"
+```
+
+---
+
+### Task 18: Crafting Chamber & Office Decoration System (with Active Student Cap)
+
+**Files:**
+- Create: `scripts/data/FurnitureData.gd`
+- Create: `scripts/hub/CraftingChamberManager.gd`
+- Create: `scripts/hub/OfficeDecorator.gd`
+- Create: `scripts/hub/VisitorSpawner.gd`
+- Create: `tests/test_office_and_crafting.gd`
+
+**Interfaces:**
+- Consumes: `ItemData`, `StudentData`, `SettingsManager`.
+- Produces: `FurnitureData` (extends `Resource`, `class_name FurnitureData`):
+  - `id: String`, `name: String`, `grid_size: Vector2i`, `comfort_points: int`, `craft_materials: Dictionary`, `price: int`, `model_path: String`
+- Produces: `CraftingChamberManager`:
+  - `facility_display_name: String = "Crafting Chamber"` (configurable via data/JSON so lore name can be updated anytime).
+  - `craft_furniture(furniture: FurnitureData, inventory: Dictionary) -> bool`
+- Produces: `OfficeDecorator`:
+  - `grid_width: int`, `grid_height: int`
+  - `place_furniture(furniture: FurnitureData, cell: Vector2i, rotation_deg: int) -> bool` (validates bounds, collision, and 90° rotation increments).
+  - `remove_furniture(cell: Vector2i) -> FurnitureData`
+  - `get_total_comfort() -> int`
+- Produces: `VisitorSpawner`:
+  - `max_active_students: int = 5` (hard cap on simultaneously spawned 3D student NPCs in office/hub to prevent FPS drops; configurable down to 3 on low-end PCs).
+  - `calculate_daily_visitors(unlocked_students: Array[String], comfort_score: int) -> Dictionary` — returns `{active_spawns: Array[String], overflow_queue: Array[String], bonus_gift_multiplier: float}` where `active_spawns.size() <= max_active_students`.
+
+- [ ] **Step 1: Write failing test for Crafting Chamber, grid decoration, and active student FPS cap**
+
+```gdscript
+# tests/test_office_and_crafting.gd
+extends SceneTree
+
+func _init():
+    var crafting = preload("res://scripts/hub/CraftingChamberManager.gd").new()
+    assert(crafting.facility_display_name == "Crafting Chamber", "Default facility name must be Crafting Chamber")
+
+    var desk = FurnitureData.new()
+    desk.id = "schale_desk"
+    desk.grid_size = Vector2i(2, 1)
+    desk.comfort_points = 150
+    desk.craft_materials = {"wood": 3, "iron": 2}
+
+    var inv = {"wood": 5, "iron": 2}
+    assert(crafting.craft_furniture(desk, inv) == true, "Should craft when materials sufficient")
+    assert(inv["wood"] == 2, "Materials must be deducted")
+
+    # Test OfficeDecorator grid placement & comfort
+    var office = preload("res://scripts/hub/OfficeDecorator.gd").new(8, 8)
+    assert(office.place_furniture(desk, Vector2i(0, 0), 0) == true, "Placement on empty cells must succeed")
+    assert(office.place_furniture(desk, Vector2i(1, 0), 0) == false, "Overlapping placement must fail")
+    assert(office.get_total_comfort() == 150, "Comfort score must sum placed furniture")
+
+    # Test VisitorSpawner hard cap for FPS protection
+    var spawner = preload("res://scripts/hub/VisitorSpawner.gd").new()
+    spawner.max_active_students = 4
+    var roster: Array[String] = ["shiroko", "hoshino", "nonomi", "serika", "ayane", "arona", "yuuka"]
+    var result = spawner.calculate_daily_visitors(roster, 2000)
+    assert(result.active_spawns.size() <= 4, "Active spawned 3D models must never exceed max_active_students cap")
+    assert(result.overflow_queue.size() == 3, "Remaining visitors must go to rotation queue")
+    assert(result.bonus_gift_multiplier > 1.0, "High comfort above cap must grant bonus gift multiplier")
+
+    print("PASS: test_office_and_crafting")
+    quit(0)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `godot --headless -s tests/test_office_and_crafting.gd`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement FurnitureData, CraftingChamberManager, OfficeDecorator, and VisitorSpawner**
+
+Implement 2D grid occupancy map with 90° rotation footprint calculation, material deduction in Crafting Chamber, and hard-capped visitor spawning with overflow rotation.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `godot --headless -s tests/test_office_and_crafting.gd`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/data/FurnitureData.gd scripts/hub/CraftingChamberManager.gd scripts/hub/OfficeDecorator.gd scripts/hub/VisitorSpawner.gd tests/test_office_and_crafting.gd
+git commit -m "feat(hub): add Crafting Chamber, office decoration grid, and FPS-capped VisitorSpawner"
+```
+
+---
+
+### Task 19: Shittim Chest Virtual Space (Arona & Plana 3D Mascot Interaction)
+
+**Files:**
+- Create: `scripts/hub/ShittimChestSpaceManager.gd`
+- Create: `scenes/hub/shittim_chest_space.tscn`
+- Create: `tests/test_shittim_chest_space.gd`
+
+**Interfaces:**
+- Consumes: `DayCycleManager`, `GestureReceiver`, `EventBus`.
+- Produces: `ShittimChestSpaceManager`:
+  - `is_loaded: bool`
+  - `active_mascots: Array[String]` (default `["arona", "plana"]`)
+  - `enter_space() -> bool` — loads the isolated Shittim Chest classroom scene on demand.
+  - `exit_space() -> void` — immediately frees the virtual space scene from memory so it consumes 0 RAM/VRAM during normal hub/combat gameplay.
+  - `get_mascot_greeting(mascot_id: String, current_hour: float) -> String` — returns contextual greeting or 3:00 AM curfew warning when `current_hour >= 2.0 and current_hour < 3.0`.
+  - `interact_with_mascot(mascot_id: String, gesture_type: String) -> Dictionary` — handles headpat, cheek pinch, poke, and dialogue for Arona and Plana.
+
+- [ ] **Step 1: Write failing test for on-demand load/unload lifecycle and Arona/Plana interactions**
+
+```gdscript
+# tests/test_shittim_chest_space.gd
+extends SceneTree
+
+func _init():
+    var space = preload("res://scripts/hub/ShittimChestSpaceManager.gd").new()
+    assert(space.is_loaded == false, "Shittim Chest space must not be loaded by default")
+
+    assert(space.enter_space() == true, "Entering Shittim Chest must load isolated space")
+    assert(space.is_loaded == true, "Space must report loaded")
+
+    var interaction = space.interact_with_mascot("arona", "HEADPAT")
+    assert(interaction.accepted == true, "Arona headpat must succeed")
+    var plana_poke = space.interact_with_mascot("plana", "CHEETH_PINCH")
+    assert(plana_poke.accepted == true, "Plana interaction must succeed")
+
+    var curfew_msg = space.get_mascot_greeting("arona", 2.5)
+    assert(curfew_msg.find("3:00") != -1 or curfew_msg.to_lower().find("sleep") != -1, "Must warn Sensei near 3AM curfew")
+
+    space.exit_space()
+    assert(space.is_loaded == false, "Exiting Shittim Chest must unload scene immediately")
+
+    print("PASS: test_shittim_chest_space")
+    quit(0)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `godot --headless -s tests/test_shittim_chest_space.gd`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement ShittimChestSpaceManager.gd and shittim_chest_space.tscn**
+
+Implement on-demand scene instantiation and immediate cleanup on exit, mascot interaction handlers for Arona and Plana, and time-of-day/curfew dialogue lines.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `godot --headless -s tests/test_shittim_chest_space.gd`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/hub/ShittimChestSpaceManager.gd scenes/hub/shittim_chest_space.tscn tests/test_shittim_chest_space.gd
+git commit -m "feat(shittim-chest): add isolated on-demand 3D space for Arona and Plana interaction"
+```
+
+---
+
+### Task 20: Multi-Phase Boss Encounters & Telegraphed AoE System
+
+**Files:**
+- Create: `scripts/combat/BossUnit.gd`
+- Create: `scripts/combat/TelegraphedAoE.gd`
+- Create: `tests/test_boss_encounters.gd`
+
+**Interfaces:**
+- Consumes: `EnemyUnit`, `CombatUnit`, `DamageResolver`.
+- Produces: `BossUnit` (extends `EnemyUnit`, `class_name BossUnit`):
+  - `current_phase: int` (1, 2, 3)
+  - `phase_thresholds: Array[float] = [0.7, 0.3]` (transitions to Phase 2 at ≤70% HP, Phase 3 at ≤30% HP).
+  - `update_phase_from_hp() -> int`
+  - `select_boss_pattern() -> Dictionary` — returns phase-specific attack pattern including telegraphed AoE parameters.
+  - Signals: `phase_changed(new_phase: int)`
+- Produces: `TelegraphedAoE` (extends `Node3D`, `class_name TelegraphedAoE`):
+  - `target_position: Vector3`, `radius: float`, `warn_duration: float` (1.0–2.0s), `damage: int`
+  - `elapsed: float`, `has_detonated: bool`
+  - `tick(delta: float, units_in_arena: Array) -> Array` — advances warning timer; upon reaching `warn_duration`, deals damage only to units still inside `radius` (rewarding RTS micro dodging).
+
+- [ ] **Step 1: Write failing test for boss phase transitions and telegraphed AoE dodge mechanics**
+
+```gdscript
+# tests/test_boss_encounters.gd
+extends SceneTree
+
+func _init():
+    var boss = preload("res://scripts/combat/BossUnit.gd").new()
+    boss.max_hp = 10000
+    boss.current_hp = 10000
+    assert(boss.current_phase == 1, "Boss starts in Phase 1")
+
+    boss.current_hp = 6800  # 68% -> Phase 2
+    assert(boss.update_phase_from_hp() == 2, "Boss must transition to Phase 2 at <=70% HP")
+
+    boss.current_hp = 2500  # 25% -> Phase 3
+    assert(boss.update_phase_from_hp() == 3, "Boss must transition to Phase 3 at <=30% HP")
+
+    # Test TelegraphedAoE warning window and dodge via micro
+    var aoe = preload("res://scripts/combat/TelegraphedAoE.gd").new()
+    aoe.target_position = Vector3(0, 0, 0)
+    aoe.radius = 4.0
+    aoe.warn_duration = 1.5
+    aoe.damage = 500
+
+    var unit_inside = {"name": "Hoshino", "position": Vector3(1, 0, 1), "hp": 2000}
+    var unit_dodged = {"name": "Shiroko", "position": Vector3(10, 0, 10), "hp": 2000}
+
+    # At 1.0s (before 1.5s telegraph finishes), no detonation yet
+    var early_hits = aoe.tick(1.0, [unit_inside, unit_dodged])
+    assert(aoe.has_detonated == false, "Must not detonate before warn_duration")
+    assert(early_hits.size() == 0, "No units hit during telegraph warning")
+
+    # At 1.6s total, detonates and hits only unit_inside
+    var hits = aoe.tick(0.6, [unit_inside, unit_dodged])
+    assert(aoe.has_detonated == true, "Must detonate once warn_duration elapsed")
+    assert(hits.size() == 1 and hits[0].name == "Hoshino", "Only unit still inside radius takes damage")
+
+    boss.free()
+    aoe.free()
+    print("PASS: test_boss_encounters")
+    quit(0)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `godot --headless -s tests/test_boss_encounters.gd`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement BossUnit.gd and TelegraphedAoE.gd**
+
+Implement multi-phase boss state machine (70% / 30% HP thresholds) and ground danger zone indicator that only damages units remaining within radius when `warn_duration` expires.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `godot --headless -s tests/test_boss_encounters.gd`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/combat/BossUnit.gd scripts/combat/TelegraphedAoE.gd tests/test_boss_encounters.gd
+git commit -m "feat(combat): add multi-phase BossUnit and telegraphed AoE dodge mechanic"
+```
+
+---
+
+### Task 21: Horizontal Student Progression & Challenge Modifiers (Anti-Grind System)
+
+**Files:**
+- Create: `scripts/core/ProgressionManager.gd`
+- Create: `tests/test_progression_system.gd`
+
+**Interfaces:**
+- Consumes: `StudentData`, `RoguelikeCardManager`.
+- Produces: `ProgressionManager`:
+  - `MAX_PERMANENT_STAT_BONUS: float = 0.10` (hard ceiling of +10% permanent stat bonus so skill & roguelike cards always outweigh grinding).
+  - `get_permanent_stat_multiplier(student_id: String, bond_level: int, upgrade_tier: int) -> float` — returns multiplier clamped to `[1.0, 1.10]`.
+  - `unlock_horizontal_option(student_id: String, option_type: String, option_id: String)` — unlocks new roguelike cards into draft pool or alternative skill variants (`"ROGUELIKE_CARD"`, `"SKILL_VARIANT"`).
+  - `get_unlocked_roguelike_cards() -> Array[String]`
+  - `set_challenge_modifiers(modifiers: Array[String])` — optional Hades-style heat/challenge modifiers (`"ENEMY_SPEED_UP"`, `"NO_REST_ROOMS"`, `"DOUBLE_BOSS_PHASE"`).
+  - `get_challenge_reward_multiplier() -> float`
+
+- [ ] **Step 1: Write failing test for +10% stat ceiling, horizontal card unlocks, and challenge modifiers**
+
+```gdscript
+# tests/test_progression_system.gd
+extends SceneTree
+
+func _init():
+    var prog = preload("res://scripts/core/ProgressionManager.gd").new()
+
+    # Even at max bond 100 and max upgrade tier, permanent stat multiplier must never exceed 1.10 (+10%)
+    var mult_zero = prog.get_permanent_stat_multiplier("shiroko", 1, 0)
+    assert(abs(mult_zero - 1.0) < 0.001, "0 upgrades at bond 1 must have 1.0x multiplier")
+
+    var mult_max = prog.get_permanent_stat_multiplier("shiroko", 100, 99)
+    assert(mult_max <= 1.1001, "Permanent stat bonus must be hard-capped at +10% (1.10x)")
+    assert(mult_max >= 1.09, "Max progression should reach the +10% cap")
+
+    # Test horizontal roguelike pool unlocks
+    prog.unlock_horizontal_option("shiroko", "ROGUELIKE_CARD", "drone_overclock")
+    assert(prog.get_unlocked_roguelike_cards().has("drone_overclock"), "Unlocked roguelike card must appear in pool")
+
+    # Test optional challenge modifiers
+    prog.set_challenge_modifiers(["ENEMY_SPEED_UP", "NO_REST_ROOMS"])
+    assert(prog.get_challenge_reward_multiplier() > 1.0, "Active challenge modifiers must increase reward multiplier")
+
+    print("PASS: test_progression_system")
+    quit(0)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `godot --headless -s tests/test_progression_system.gd`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement ProgressionManager.gd**
+
+Implement horizontal unlock registry (roguelike cards and skill variants), permanent stat multiplier strictly clamped to `1.0 + MAX_PERMANENT_STAT_BONUS` (`1.10`), and optional challenge modifiers.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `godot --headless -s tests/test_progression_system.gd`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/core/ProgressionManager.gd tests/test_progression_system.gd
+git commit -m "feat(progression): add horizontal unlocks, +10% stat cap, and challenge modifiers"
+```
+

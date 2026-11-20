@@ -63,8 +63,14 @@ Dự án là một fan game tri ân cộng đồng người hâm mộ tựa game
 * **Cấu trúc Không gian & Vòng đời NPC:**
   * **Học viện lớn (Major Academy Zones):** Abydos, Gehenna, Millennium, Trinity, Schale...
   * **Khu vực trung gian (Sub-zones):** Tuyến phố, trạm trung chuyển xe buýt, khu thương mại Angel 24 nối giữa các học viện.
-  * **Vòng đời xuất hiện NPC (Zone Spawner):** Mỗi phân khu chỉ nạp các học sinh thuộc trường đó (tránh tràn RAM). Các học sinh được mời hoặc mở khóa sẽ xuất hiện thêm tại Văn phòng Schale và Căn tin.
-  * **Nội cảnh tòa nhà (Interiors):** Phòng làm việc Schale, lớp học, câu lạc bộ, cửa hàng tiện lợi, nhà bếp Schale. Chuyển cảnh vào tòa nhà qua trigger cửa tương tác (Fade transition nhanh).
+  * **Vòng đời xuất hiện NPC (Zone Spawner & Active Student Cap):** Mỗi phân khu chỉ nạp các học sinh thuộc trường đó (tránh tràn RAM). Các học sinh được mời hoặc mở khóa sẽ xuất hiện thêm tại Văn phòng Schale và Căn tin, nhưng luôn tuân theo **Trần Giới hạn Học sinh Hiển thị Đồng thời (Max Active Students Cap: mặc định 5, máy yếu có thể hạ xuống 3 trong Settings)** để chống tụt khung hình.
+  * **Nội cảnh tòa nhà (Interiors):** Phòng làm việc Schale, lớp học, câu lạc bộ, cửa hàng tiện lợi, nhà bếp Schale, **Crafting Chamber** (khu vực chế tạo — tên hiển thị lấy từ dữ liệu cấu hình để dễ thay đổi). Chuyển cảnh vào tòa nhà qua trigger cửa tương tác (Fade transition nhanh).
+  * **Trang trí Văn phòng (Office Decoration) & Crafting Chamber:**
+    * Người chơi có thể mua hoặc chế tạo vật phẩm nội thất tại *Crafting Chamber* rồi bài trí trong Văn phòng Schale theo lưới ô vuông (grid snapping, xoay 90°).
+    * Nội thất cộng điểm **Comfort (Độ thoải mái)** giúp thu hút học sinh ghé thăm và tặng quà mỗi ngày. Khi số học sinh muốn ghé vượt quá trần hiển thị (`max_active_students`), hệ thống chuyển sang cơ chế xoay vòng khách theo ca (Visitor Rotation) và tăng chất lượng quà thay vì spawn thêm model 3D.
+  * **Không gian Ảo Shittim Chest (Arona & Plana Mascot Space):**
+    * Truy cập từ điện thoại Shittim Chest vào một không gian 3D hạn chế riêng biệt (lớp học ảo), **chỉ nạp khi người chơi bước vào và giải phóng hoàn toàn khi thoát ra**.
+    * Tại đây người chơi có thể tương tác trực tiếp (xoa đầu, nhéo má, chọc, trò chuyện kịch bản, nhận lời chào mỗi ngày và nhắc nhở trước giờ giới nghiêm 3:00 AM) với hai mascot **Arona** và **Plana**.
 * **Điều khiển Sensei:**
   * Chuyển đổi linh hoạt giữa góc nhìn thứ nhất (FPS) và góc nhìn thứ 3 (TPS) (phím `V` hoặc con lăn chuột).
   * Di chuyển WASD, `Space` nhảy, `Shift` chạy nhanh, `E` mở menu tương tác đối tượng/nhân vật.
@@ -88,6 +94,11 @@ Dự án là một fan game tri ân cộng đồng người hâm mộ tựa game
     * *Cho ăn (Feeding Gesture):* Chọn món ăn từ túi $\rightarrow$ đưa con trỏ chuột gắp thức ăn lại gần miệng học sinh $\rightarrow$ học sinh há miệng đón nhận, biểu cảm thỏa mãn, âm thanh nhai và voice line khen ngon $\rightarrow$ tăng điểm Bond lớn và nhận buff chiến đấu tạm thời.
   * Lồng tiếng phản ứng (Reaction Voice clips) và bong bóng thoại phụ đề bên cạnh.
   * **Tùy biến Mod:** Modder có thể thêm tương tác mới bằng cách định nghĩa Collider + Animation + Voice trong file cấu hình JSON.
+* **Hệ thống Cấp Quan Hệ (Max Bond 100) & Cổng Nhiệm Vụ Học Sinh (Bond Quests Level 1–20):**
+  * Cấp độ thân thiết (Bond Level) tối đa là **100** (đồng bộ với game gốc).
+  * Trong giai đoạn từ **Level 1 đến Level 20**, khi chạm các mốc quan trọng (**Level 5, 10, 15, 20**), thanh Bond sẽ tạm khóa lên cấp cho đến khi người chơi hoàn thành **Nhiệm vụ Học sinh (Bond Quest)** tương ứng của học sinh đó.
+  * Từ **Level 21 đến Level 100**, học sinh có thể tăng cấp tự do không bị chặn, đồng thời cấu trúc dữ liệu `BondQuestData` được thiết kế mở để dễ dàng bổ sung thêm nhiệm vụ cho các mốc > 20 trong quá trình phát triển sau này.
+  * *(Tính năng Xem lại Memorial Lobby tạm thời để lại cho giai đoạn phát triển về sau).*
 
 ### 5.3. Mini-game Nấu Nướng (Cooking Minigame)
 * **Vị trí:** Căn bếp Văn phòng Schale hoặc CLB Nghiên cứu Ẩm thực (Gehenna).
@@ -124,6 +135,13 @@ Dự án là một fan game tri ân cộng đồng người hâm mộ tựa game
     * *Boss Ẩn Đột Kích (Hidden Boss):* Một Boss/Elite phụ bất ngờ xuất hiện giữa phòng cùng hiệu ứng rung lắc màn hình và rơi loot quý.
     * *Thế Lực Thứ Ba Can Thiệp (Third-Party Intervention):* Một nhóm chiến binh phe thứ ba xuất hiện tấn công cả học sinh lẫn kẻ địch.
   * Ràng buộc: Không kích hoạt sự kiện trong 15 giây đầu của phòng hoặc khi bảng chọn thẻ bài đang mở.
+* **Hệ Thống Đánh Boss Đa Giai Đoạn (Multi-Phase Boss Encounters):**
+  * Các màn đấu Boss cuối phó bản hoặc Boss đặc biệt có cơ chế chuyển giai đoạn theo ngưỡng máu (**70% HP** và **30% HP**), thay đổi mô hình tấn công và nhịp độ chiêu thức.
+  * **Kỹ năng Cảnh báo trước (Telegraphed AoE):** Boss hiển thị vùng cảnh báo đỏ trên mặt sàn 1–2 giây trước khi tung đòn sát thương lớn, tận dụng tối đa cơ chế điều khiển RTS micro để người chơi chủ động kéo học sinh né tránh.
+* **Tiến Trình Nâng Cấp Học Sinh Chống Cày Chỉ Số (Horizontal Progression & Capped Stat Upgrades):**
+  * **Mở khóa chiều ngang (Horizontal Unlocks):** Tăng Bond và hoàn thành nhiệm vụ chủ yếu mở khóa thêm **thẻ bài mới vào bộ bài Roguelike**, mở **biến thể kỹ năng** và hiệu ứng phối hợp.
+  * **Giới hạn trần chỉ số vĩnh viễn:** Mức cộng chỉ số cơ bản vĩnh viễn được giới hạn ở trần thấp (tối đa **+10%** tổng chỉ số).
+  * **Cân bằng chuẩn kỹ năng:** Độ khó Chuẩn (Normal) được thiết kế để có thể vượt qua với **0% nâng cấp chỉ số** (thuần kỹ năng điều khiển RTS micro + chọn thẻ Roguelike). Cung cấp thêm hệ số **Độ khó Thử thách (Challenge Modifiers)** tự chọn cho người chơi muốn thử sức.
 
 ### 5.5. Giao Diện Người Dùng (UI & MomoTalk OS)
 * **HUD Tối giản trong Hub:** Mini-map / La bàn, Giờ trong ngày & Ngày, Thanh AP hiện tại, Tiền / Tài nguyên.
@@ -139,6 +157,7 @@ Dự án là một fan game tri ân cộng đồng người hâm mộ tựa game
 * **Vị trí Thư mục Mod (Portable Mod Directory):**
   * Nằm trực tiếp trong thư mục cài đặt game (`<game_dir>/mods/` thay vì lưu trong thư mục `user://` ổ C), sử dụng `OS.get_executable_path().get_base_dir().path_join("mods")`.
   * Giúp người chơi cài đặt game trên bất kỳ ổ đĩa nào (D, E...) mà không lo chiếm dụng dung lượng phân vùng hệ thống (ổ C).
+  * **Thư mục save game cũng portable:** `<game_dir>/saves/` (trong Editor: `res://saves`). Nếu thư mục game không ghi được (ví dụ cài trong Program Files) thì tự fallback về `user://saves`.
   * Cấu trúc thư mục chuẩn:
     ```text
     <game_dir>/mods/
