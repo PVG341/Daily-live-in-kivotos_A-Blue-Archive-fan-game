@@ -1,0 +1,48 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/minigames/CookingStation.gd" id="1_cooking_station"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_counter"]
+size = Vector3(1.6, 1.0, 0.9)
+
+[sub_resource type="BoxMesh" id="BoxMesh_counter"]
+size = Vector3(1.6, 0.9, 0.8)
+
+[node name="CookingStation" type="Area3D"]
+script = ExtResource("1_cooking_station")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+shape = SubResource("BoxShape3D_counter")
+
+[node name="CounterMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+mesh = SubResource("BoxMesh_counter")
+
+[node name="CookingCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 1.75, 1.35)
+current = false
+
+[node name="CookingUI" type="CanvasLayer" parent="."]
+visible = false
+
+[node name="PrepContainer" type="Control" parent="CookingUI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TimingIndicatorBar" type="ProgressBar" parent="CookingUI"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 180.0
+offset_top = -96.0
+offset_right = -180.0
+offset_bottom = -64.0
+grow_horizontal = 2
+grow_vertical = 0
+value = 50.0
