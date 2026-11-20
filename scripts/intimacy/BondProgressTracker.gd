@@ -21,6 +21,15 @@ func get_bond_level(student_id: String) -> int:
 func get_bond_exp(student_id: String) -> int:
 	return int(_bond_exp.get(student_id, 0))
 
+func has_student(student_id: String) -> bool:
+	return _bond_levels.has(student_id) or _bond_exp.has(student_id)
+
+func seed_student_bond(student_id: String, level: int, exp_val: int) -> void:
+	if student_id.is_empty():
+		return
+	_bond_levels[student_id] = clampi(level, 0, MAX_BOND_LEVEL)
+	_bond_exp[student_id] = maxi(0, exp_val)
+
 func is_bond_gate_locked(student_id: String) -> bool:
 	var level: int = get_bond_level(student_id)
 	if level >= MAX_BOND_LEVEL:

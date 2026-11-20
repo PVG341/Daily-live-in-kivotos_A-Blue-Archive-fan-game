@@ -225,11 +225,26 @@ func _run_tests() -> void:
 	check(pinch_offset > 0.0, "apply_cheek_pinch_input must return positive offset")
 	check(viewport_node.blendshape_weights["cheek_puff"] > 0.0, "Cheek pinch must increase cheek_puff blendshape weight")
 
-	# Feed student updates mouth_open and adds bond EXP
+	# Feed student updates mouth_open and adds bond EXP without clobbering existing bond_level
 	var feed_result: Dictionary = viewport_node.feed_student(fav_food)
 	check(feed_result.get("accepted", false) == true, "feed_student must accept FOOD ItemData")
 	check(viewport_node.blendshape_weights["mouth_open"] > 0.0, "Feeding must increase mouth_open blendshape weight")
 	check(viewport_node.bond_tracker.get_bond_exp("shiroko") > 0, "Feeding must add bond EXP to bond_tracker")
+	check(student.bond_level == 1, "Feeding must preserve existing StudentData.bond_level (1), not reset to 0")
+
+	# Pre-existing saved StudentData bond_level and bond_exp are preserved and incremented
+	var saved_student := StudentData.new()
+	saved_student.id = "arisu"
+	saved_student.student_name = "Tendou Arisu"
+	saved_student.favorite_food = "matcha_parfait"
+	saved_student.bond_level = 3
+	saved_student.bond_exp = 340
+	viewport_node.start_session(saved_student)
+	check(viewport_node.bond_tracker.get_bond_level("arisu") == 3, "start_session must seed bond_tracker level from StudentData")
+	check(viewport_node.bond_tracker.get_bond_exp("arisu") == 340, "start_session must seed bond_tracker exp from StudentData")
+	viewport_node.feed_student(fav_food)
+	check(saved_student.bond_level == 4, "Pre-existing bond_level (3) must increment to 4 after reaching threshold (350)")
+	check(saved_student.bond_exp == 20, "Overflow bond_exp (340 + 30 - 350 = 20) must be preserved on StudentData")
 
 	# Register custom modded action
 	viewport_node.register_custom_action("boop_nose", {"label": "Boop Nose", "bond_bonus": 15})

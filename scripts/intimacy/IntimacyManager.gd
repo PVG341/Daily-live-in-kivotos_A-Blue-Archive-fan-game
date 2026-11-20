@@ -25,6 +25,8 @@ func start_session(student: StudentData) -> void:
 	current_student = student
 	gesture_receiver.reset()
 	_reset_blendshapes()
+	if student != null and not student.id.is_empty() and not bond_tracker.has_student(student.id):
+		bond_tracker.seed_student_bond(student.id, student.bond_level, student.bond_exp)
 
 func end_session() -> void:
 	current_student = null
