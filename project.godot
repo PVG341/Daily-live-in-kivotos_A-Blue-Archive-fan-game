@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="BA fan game test"
-run/main_scene="uid://kgrsp27y4v04"
+run/main_scene="res://scenes/hub/zones/schale_building.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 

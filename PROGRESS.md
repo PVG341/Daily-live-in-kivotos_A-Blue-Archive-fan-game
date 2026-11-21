@@ -1,8 +1,8 @@
 # PROGRESS.md — Blue Archive 3D Fan Game (Godot 4.7)
 
-* **Ngày cập nhật:** 2026-11-20
+* **Ngày cập nhật:** 2026-11-21
 * **Nhánh Git hiện tại:** `main`
-* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm Final Review Fix Wave, Memory/RAM Leak Audit, và Phase 5 Mốc 1 Hub Greybox), toàn bộ **23/23 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
+* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm Final Review Fix Wave, Memory/RAM Leak Audit, và Phase 5 Mốc 1 + Tòa nhà Schale liền mạch nhiều tầng), toàn bộ **24/24 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
 * **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript, addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
 * **Tài liệu nguồn:**
   * Design Spec: [docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md](docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md)
@@ -32,14 +32,14 @@ D:\This PC\Project\test
 │   └── plans/2026-11-19-blue-archive-fan-game.md
 ├── scenes/
 │   ├── combat/        # combat_camera.tscn, roguelike_card_draft.tscn
-│   ├── hub/           # loading_screen.tscn, player_sensei.tscn, shittim_chest_space.tscn
+│   ├── hub/           # loading_screen.tscn, player_sensei.tscn, shittim_chest_space.tscn, zones/schale_building.tscn, zones/schale_office.tscn, zones/crafting_chamber.tscn
 │   ├── intimacy/      # intimacy_viewport.tscn
 │   ├── minigames/     # cooking_station.tscn
 │   └── ui/            # combat_hud.tscn, hud.tscn, mod_manager_menu.tscn, pause_menu.tscn, phone_os.tscn, settings_menu.tscn
 ├── scripts/
 │   ├── core/          # EventBus, DayCycleManager, SaveManager, ModLoader, MissionManager, ProgressionManager, SettingsManager
 │   ├── data/          # StudentData, SkillData, ItemData, RecipeData, QuestData, FurnitureData
-│   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, DoorPortal, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
+│   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, HubSceneController, DoorPortal, InteractiveDoor, InteractiveElevator, ElevatorCallButton, FloorVisibilityZone, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
 │   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
 │   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
 │   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE
@@ -90,7 +90,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 }
 ```
 
-### Danh sách 23 bộ test
+### Danh sách 24 bộ test
 * `godot --headless -s tests/test_data_models.gd`
 * `godot --headless -s tests/test_day_cycle.gd`
 * `godot --headless -s tests/test_save_load.gd`
@@ -114,6 +114,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 * `godot --headless -s tests/test_progression_system.gd`
 * `godot --headless -s tests/test_memory_leaks.gd`
 * `godot --headless -s tests/test_hub_scene_flow.gd`
+* `godot --headless -s tests/test_seamless_hub.gd`
 
 ---
 

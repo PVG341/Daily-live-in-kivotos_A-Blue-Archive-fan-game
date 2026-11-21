@@ -1,9 +1,9 @@
 [gd_scene format=3 uid="uid://wqr5jjlwmchw"]
 
-[ext_resource type="Script" path="res://scripts/hub/HubSceneController.gd" id="1_hub_ctrl"]
+[ext_resource type="Script" uid="uid://d0dljitvn6ghd" path="res://scripts/hub/HubSceneController.gd" id="1_hub_ctrl"]
 [ext_resource type="PackedScene" path="res://scenes/hub/player_sensei.tscn" id="2_sensei"]
-[ext_resource type="Script" path="res://scripts/hub/DoorPortal.gd" id="3_portal"]
-[ext_resource type="Script" path="res://scripts/hub/ShittimChestSpaceManager.gd" id="4_shittim"]
+[ext_resource type="Script" uid="uid://b8eg2vkq7pufr" path="res://scripts/hub/DoorPortal.gd" id="3_portal"]
+[ext_resource type="Script" uid="uid://dy8ur6vkbmqfk" path="res://scripts/hub/ShittimChestSpaceManager.gd" id="4_shittim"]
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="5_hud"]
 [ext_resource type="PackedScene" path="res://scenes/ui/phone_os.tscn" id="6_phone"]
 [ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="7_pause"]
@@ -33,40 +33,40 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
 use_collision = true
 size = Vector3(12, 0.2, 12)
 
-[node name="WallNorth" type="CSGBox3D" parent="Environment"]
+[node name="WallNorth" type="CSGBox3D" parent="Environment" unique_id=781293890]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -6)
 use_collision = true
 size = Vector3(12, 4, 0.3)
 
-[node name="WallSouth" type="CSGBox3D" parent="Environment"]
+[node name="WallSouth" type="CSGBox3D" parent="Environment" unique_id=772769010]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 6)
 use_collision = true
 size = Vector3(12, 4, 0.3)
 
-[node name="WallEast" type="CSGBox3D" parent="Environment"]
+[node name="WallEast" type="CSGBox3D" parent="Environment" unique_id=933279767]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 2, 0)
 use_collision = true
 size = Vector3(0.3, 4, 12)
 
-[node name="WallWest" type="CSGBox3D" parent="Environment"]
+[node name="WallWest" type="CSGBox3D" parent="Environment" unique_id=815363313]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 2, 0)
 use_collision = true
 size = Vector3(0.3, 4, 12)
 
-[node name="CraftingMachine" type="CSGCylinder3D" parent="Environment"]
+[node name="CraftingMachine" type="CSGCylinder3D" parent="Environment" unique_id=1597268385]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -2.5)
 use_collision = true
 radius = 1.2
 height = 1.6
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="Environment"]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="Environment" unique_id=459541313]
 transform = Transform3D(0.8660254, 0.3535534, -0.3535534, 0, 0.7071068, 0.7071068, 0.5, -0.61237246, 0.61237246, 0, 6, 0)
 shadow_enabled = true
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="Environment"]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="Environment" unique_id=1799113743]
 environment = SubResource("Environment_craft")
 
-[node name="Sensei" parent="Environment" instance=ExtResource("2_sensei")]
+[node name="Sensei" parent="Environment" unique_id=1919684099 instance=ExtResource("2_sensei")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 3)
 
 [node name="Portal" type="Area3D" parent="." unique_id=1275609836]
@@ -80,17 +80,17 @@ shape = SubResource("BoxShape3D_673w0")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Portal" unique_id=312387239]
 mesh = SubResource("BoxMesh_x8buy")
 
-[node name="ShittimChestSpaceManager" type="Node" parent="."]
+[node name="ShittimChestSpaceManager" type="Node" parent="." unique_id=1918744091]
 script = ExtResource("4_shittim")
 
-[node name="UIContainer" type="CanvasLayer" parent="."]
+[node name="UIContainer" type="CanvasLayer" parent="." unique_id=1608551555]
 
-[node name="HUD" parent="UIContainer" instance=ExtResource("5_hud")]
+[node name="HUD" parent="UIContainer" unique_id=415476776 instance=ExtResource("5_hud")]
 
-[node name="PhoneOS" parent="UIContainer" instance=ExtResource("6_phone")]
+[node name="PhoneOS" parent="UIContainer" unique_id=567894389 instance=ExtResource("6_phone")]
 
-[node name="PauseMenu" parent="UIContainer" instance=ExtResource("7_pause")]
+[node name="PauseMenu" parent="UIContainer" unique_id=1842517016 instance=ExtResource("7_pause")]
 
-[node name="SettingsMenu" parent="UIContainer" instance=ExtResource("8_settings")]
+[node name="SettingsMenu" parent="UIContainer" unique_id=12802289 instance=ExtResource("8_settings")]
 
-[node name="ModManagerMenu" parent="UIContainer" instance=ExtResource("9_mod")]
+[node name="ModManagerMenu" parent="UIContainer" unique_id=1228128288 instance=ExtResource("9_mod")]
