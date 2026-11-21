@@ -1,0 +1,109 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/CombatArenaController.gd" id="1_arena_ctrl"]
+[ext_resource type="PackedScene" path="res://scenes/combat/combat_camera.tscn" id="2_cam"]
+[ext_resource type="PackedScene" path="res://scenes/ui/combat_hud.tscn" id="3_hud"]
+[ext_resource type="Script" path="res://scripts/combat/SelectionBoxOverlay.gd" id="4_sel_box"]
+[ext_resource type="Script" path="res://scripts/combat/SkillTargetingOverlay.gd" id="5_target_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/combat/roguelike_card_draft.tscn" id="6_draft"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_combat"]
+
+[sub_resource type="Sky" id="Sky_combat"]
+sky_material = SubResource("ProceduralSkyMaterial_combat")
+
+[sub_resource type="Environment" id="Environment_combat"]
+background_mode = 2
+sky = SubResource("Sky_combat")
+
+[node name="CombatArena" type="Node3D"]
+script = ExtResource("1_arena_ctrl")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.8660254, 0.3535534, -0.3535534, 0, 0.7071068, 0.7071068, 0.5, -0.61237246, 0.61237246, 0, 14, 4)
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_combat")
+
+[node name="CombatCameraRig" parent="." instance=ExtResource("2_cam")]
+
+[node name="RoomContainer" type="Node3D" parent="."]
+
+[node name="UnitsContainer" type="Node3D" parent="."]
+
+[node name="EnemiesContainer" type="Node3D" parent="."]
+
+[node name="EffectsContainer" type="Node3D" parent="."]
+
+[node name="CombatHUD" parent="." instance=ExtResource("3_hud")]
+
+[node name="CombatUIOverlay" type="CanvasLayer" parent="."]
+
+[node name="SelectionBoxOverlay" type="Control" parent="CombatUIOverlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4_sel_box")
+
+[node name="SkillTargetingOverlay" type="Control" parent="CombatUIOverlay"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_target_overlay")
+
+[node name="StatusBanner" type="Label" parent="CombatUIOverlay"]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -260.0
+offset_top = 18.0
+offset_right = 260.0
+offset_bottom = 48.0
+grow_horizontal = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+text = "Combat Ready"
+
+[node name="RoguelikeCardDraft" parent="CombatUIOverlay" instance=ExtResource("6_draft")]
+visible = false
+
+[node name="ResultPanel" type="PanelContainer" parent="CombatUIOverlay"]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -180.0
+offset_top = -100.0
+offset_right = 180.0
+offset_bottom = 100.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CombatUIOverlay/ResultPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ResultLabel" type="Label" parent="CombatUIOverlay/ResultPanel/VBoxContainer"]
+layout_mode = 2
+horizontal_alignment = 1
+text = "VICTORY"
+
+[node name="RestartButton" type="Button" parent="CombatUIOverlay/ResultPanel/VBoxContainer"]
+layout_mode = 2
+text = "Play Again"
+
+[node name="ReturnHubButton" type="Button" parent="CombatUIOverlay/ResultPanel/VBoxContainer"]
+layout_mode = 2
+text = "Return to Schale"

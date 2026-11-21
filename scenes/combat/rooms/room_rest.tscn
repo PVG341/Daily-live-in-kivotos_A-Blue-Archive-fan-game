@@ -1,0 +1,69 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/CombatRoomData.gd" id="1_room_data"]
+
+[sub_resource type="NavigationMesh" id="NavigationMesh_rest"]
+vertices = PackedVector3Array(-9.5, 0.2, -8.5, -9.5, 0.2, 8.5, 9.5, 0.2, 8.5, 9.5, 0.2, -8.5)
+polygons = [PackedInt32Array(0, 1, 2, 3)]
+
+[node name="RoomRest" type="Node3D"]
+script = ExtResource("1_room_data")
+room_type = "REST"
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="."]
+navigation_mesh = SubResource("NavigationMesh_rest")
+
+[node name="ArenaFloor" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+use_collision = true
+size = Vector3(20, 0.2, 18)
+
+[node name="WallNorth" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -9)
+use_collision = true
+size = Vector3(20, 2, 0.4)
+
+[node name="WallSouth" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 9)
+use_collision = true
+size = Vector3(20, 2, 0.4)
+
+[node name="WallWest" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 1, 0)
+use_collision = true
+size = Vector3(0.4, 2, 18)
+
+[node name="WallEast" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 0)
+use_collision = true
+size = Vector3(0.4, 2, 18)
+
+[node name="RestFountain" type="CSGCylinder3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, -2)
+use_collision = true
+radius = 1.6
+height = 1.2
+
+[node name="RestLight" type="OmniLight3D" parent="RestFountain"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+light_color = Color(0.45, 0.9, 1, 1)
+light_energy = 2.0
+omni_range = 12.0
+
+[node name="CoverPoints" type="Node3D" parent="."]
+
+[node name="PlayerSpawns" type="Node3D" parent="."]
+
+[node name="Spawn1" type="Marker3D" parent="PlayerSpawns"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 5)
+
+[node name="Spawn2" type="Marker3D" parent="PlayerSpawns"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 0, 5)
+
+[node name="Spawn3" type="Marker3D" parent="PlayerSpawns"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 0, 5)
+
+[node name="Spawn4" type="Marker3D" parent="PlayerSpawns"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0, 5)
+
+[node name="EnemySpawns" type="Node3D" parent="."]
