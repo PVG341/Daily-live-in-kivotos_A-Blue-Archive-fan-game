@@ -6,6 +6,7 @@ signal transition_completed(target_scene_path: String, spawn_point_id: String)
 
 var current_scene_path: String = ""
 var pending_spawn_point_id: String = ""
+var active_camera_mode: int = -1
 var spawn_points: Dictionary = {}
 var loading_tips: Array[String] = [
 	"Schale Tip: Visit students around Kivotos between commissions to deepen your bond rank.",

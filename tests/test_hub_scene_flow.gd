@@ -122,10 +122,33 @@ func _run_tests() -> void:
 	hud_mgr.update_interaction_prompt("")
 	check(prompt_container.visible == false and prompt_label.text == "", "update_interaction_prompt('') must hide container and clear text")
 
-	# 5. Cleanup & Orphan Check
+	# 5. Verify Camera Mode Persistence Across Zone Transitions (FPS -> Crafting Chamber -> FPS preserved)
+	var ztm := root.get_node_or_null("ZoneTransitionManager")
+	var orig_cam_mode: int = ztm.active_camera_mode if ztm != null else -1
+	if sensei_ctrl.camera_state.is_tps():
+		sensei_ctrl.toggle_camera_mode()
+	check(sensei_ctrl.camera_state.is_fps() == true, "Sensei in SchaleOffice must switch to FPS before zone transition")
+
 	root.remove_child(office)
 	office.free()
+
+	var crafting_packed := load("res://scenes/hub/zones/crafting_chamber.tscn") as PackedScene
+	var crafting := crafting_packed.instantiate() as HubSceneController
+	root.add_child(crafting)
+	var crafting_sensei := crafting.sensei
+	check(crafting_sensei != null, "CraftingChamber must resolve SenseiController")
+	if crafting_sensei != null:
+		check(crafting_sensei.camera_state.is_fps() == true, "Camera mode FPS must persist into CraftingChamber after zone transition")
+		check(crafting_sensei.fps_camera != null and crafting_sensei.fps_camera.current == true, "CraftingChamber fps_camera must be active")
+		check(crafting_sensei.tps_camera != null and crafting_sensei.tps_camera.current == false, "CraftingChamber tps_camera must be inactive")
+
+	root.remove_child(crafting)
+	crafting.free()
+	if ztm != null:
+		ztm.active_camera_mode = orig_cam_mode
+
+	# 6. Cleanup & Orphan Check
 	var orphans: int = int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
-	check(orphans == 0, "OBJECT_ORPHAN_NODE_COUNT after freeing Hub scene must be 0, got %d" % orphans)
+	check(orphans == 0, "OBJECT_ORPHAN_NODE_COUNT after freeing Hub scenes must be 0, got %d" % orphans)
 
 	_completed = true

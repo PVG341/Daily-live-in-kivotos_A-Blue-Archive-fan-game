@@ -48,6 +48,7 @@ func _ready() -> void:
 		interact_raycast.target_position = Vector3(0.0, 0.0, -interact_distance)
 		interact_raycast.collide_with_areas = true
 		interact_raycast.collide_with_bodies = true
+	_restore_camera_mode()
 	_sync_cameras()
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -99,6 +100,10 @@ func _physics_process(delta: float) -> void:
 func toggle_camera_mode() -> int:
 	_cache_nodes()
 	var new_mode: int = camera_state.toggle()
+	if is_inside_tree():
+		var ztm := get_node_or_null("/root/ZoneTransitionManager")
+		if ztm != null and &"active_camera_mode" in ztm:
+			ztm.set(&"active_camera_mode", new_mode)
 	_sync_cameras()
 	return new_mode
 
@@ -231,6 +236,19 @@ func _sync_cameras() -> void:
 		fps_camera.current = fps_active
 	if tps_camera:
 		tps_camera.current = not fps_active
+
+func _restore_camera_mode() -> void:
+	if not is_inside_tree():
+		return
+	var ztm := get_node_or_null("/root/ZoneTransitionManager")
+	if ztm == null:
+		return
+	var saved_mode: Variant = ztm.get(&"active_camera_mode")
+	if saved_mode == null:
+		return
+	var mode_int: int = int(saved_mode)
+	if mode_int == CameraModeState.CameraMode.FPS or mode_int == CameraModeState.CameraMode.TPS:
+		camera_state.current_mode = mode_int
 
 func _exit_tree() -> void:
 	is_sitting = false
