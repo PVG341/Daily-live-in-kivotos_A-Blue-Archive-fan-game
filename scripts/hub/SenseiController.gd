@@ -2,6 +2,8 @@
 class_name SenseiController
 extends CharacterBody3D
 
+signal interactable_focused(prompt_text: String, target: Object)
+
 const DEFAULT_INPUT_BINDINGS := {
 	&"move_forward": KEY_W,
 	&"move_back": KEY_S,
@@ -25,6 +27,13 @@ var tps_camera: Camera3D
 var fps_camera: Camera3D
 var spring_arm: SpringArm3D
 var head_pivot: Node3D
+var proximity_area: Area3D
+
+var is_sitting: bool = false
+var active_chair: SittableChair = null
+var _pre_sit_position: Vector3 = Vector3.ZERO
+var _current_interactable: Object = null
+var _current_prompt: String = ""
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
@@ -59,6 +68,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		try_interact()
 
 func _physics_process(delta: float) -> void:
+	if is_sitting:
+		if active_chair == null or not is_instance_valid(active_chair):
+			stand_up()
+		elif Input.is_action_just_pressed(&"jump"):
+			stand_up()
+		else:
+			if is_inside_tree():
+				global_position = active_chair.get_seat_world_position()
+			else:
+				position = active_chair.get_seat_world_position()
+			velocity = Vector3.ZERO
+			_update_interactable_focus()
+			return
+
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
 	elif Input.is_action_just_pressed(&"jump"):
@@ -71,6 +94,7 @@ func _physics_process(delta: float) -> void:
 	velocity.z = desired.z
 
 	move_and_slide()
+	_update_interactable_focus()
 
 func toggle_camera_mode() -> int:
 	_cache_nodes()
@@ -92,19 +116,92 @@ func compute_desired_horizontal_velocity(
 	var speed := sprint_speed if is_sprinting else walk_speed
 	return raw_dir.normalized() * speed
 
-func try_interact() -> Object:
+func get_focused_interactable() -> Object:
 	_cache_nodes()
-	if interact_raycast == null:
-		return null
-	if interact_raycast.is_inside_tree():
-		interact_raycast.force_raycast_update()
-	if not interact_raycast.is_colliding():
-		return null
-	var collider := interact_raycast.get_collider()
-	if collider != null and collider.has_method(&"interact"):
-		collider.interact()
-		return collider
+	if interact_raycast != null:
+		if interact_raycast.is_inside_tree():
+			interact_raycast.force_raycast_update()
+		if interact_raycast.is_colliding():
+			var collider := interact_raycast.get_collider()
+			if collider != null and collider.has_method(&"interact"):
+				return collider
+
+	if proximity_area != null and proximity_area.is_inside_tree():
+		var origin: Vector3 = global_position if is_inside_tree() else position
+		var closest_area: Area3D = null
+		var closest_dist_sq: float = INF
+		for area in proximity_area.get_overlapping_areas():
+			if area != null and is_instance_valid(area) and area.has_method(&"interact"):
+				var dist_sq: float = origin.distance_squared_to(area.global_position)
+				if dist_sq < closest_dist_sq:
+					closest_dist_sq = dist_sq
+					closest_area = area
+		if closest_area != null:
+			return closest_area
+
 	return null
+
+func sit_on_chair(chair: SittableChair) -> void:
+	if chair == null or not is_instance_valid(chair):
+		return
+	_pre_sit_position = global_position if is_inside_tree() else position
+	if not chair.is_occupied:
+		chair.interact()
+	active_chair = chair
+	is_sitting = true
+	velocity = Vector3.ZERO
+	var seat_pos: Vector3 = chair.get_seat_world_position()
+	if is_inside_tree():
+		global_position = seat_pos
+	else:
+		position = seat_pos
+
+func stand_up() -> void:
+	if not is_sitting:
+		return
+	if active_chair != null and is_instance_valid(active_chair) and active_chair.is_occupied:
+		active_chair.interact()
+	if is_inside_tree():
+		global_position = _pre_sit_position
+	else:
+		position = _pre_sit_position
+	is_sitting = false
+	active_chair = null
+	velocity = Vector3.ZERO
+
+func try_interact() -> Object:
+	if is_sitting:
+		var chair := active_chair
+		stand_up()
+		_update_interactable_focus()
+		return chair
+	var target := get_focused_interactable()
+	if target == null:
+		return null
+	if target is SittableChair:
+		sit_on_chair(target as SittableChair)
+		_update_interactable_focus()
+		return target
+	target.interact()
+	_update_interactable_focus()
+	return target
+
+func _update_interactable_focus() -> void:
+	var target: Object = null
+	var prompt: String = ""
+	if is_sitting:
+		target = active_chair
+		prompt = "[E] Stand up"
+	else:
+		target = get_focused_interactable()
+		if target != null and is_instance_valid(target):
+			var raw_prompt: Variant = target.get(&"interaction_prompt")
+			prompt = str(raw_prompt) if raw_prompt != null and not str(raw_prompt).is_empty() else "[E] Interact"
+
+	if target != _current_interactable or prompt != _current_prompt:
+		_current_interactable = target
+		_current_prompt = prompt
+		interactable_focused.emit(prompt, target)
 
 func _ensure_input_map() -> void:
 	for action: StringName in DEFAULT_INPUT_BINDINGS:
@@ -125,6 +222,8 @@ func _cache_nodes() -> void:
 		tps_camera = get_node_or_null("HeadPivot/SpringArm3D/TPSCamera") as Camera3D
 	if interact_raycast == null:
 		interact_raycast = get_node_or_null("HeadPivot/InteractRayCast") as RayCast3D
+	if proximity_area == null:
+		proximity_area = get_node_or_null("ProximityArea") as Area3D
 
 func _sync_cameras() -> void:
 	var fps_active := camera_state.is_fps()
@@ -134,6 +233,9 @@ func _sync_cameras() -> void:
 		tps_camera.current = not fps_active
 
 func _exit_tree() -> void:
+	is_sitting = false
+	active_chair = null
+	_current_interactable = null
 	var sm := get_node_or_null("/root/SettingsManager")
 	if sm != null and sm.has_signal("settings_changed") and sm.settings_changed.is_connected(_apply_settings_draw_distance):
 		sm.settings_changed.disconnect(_apply_settings_draw_distance)

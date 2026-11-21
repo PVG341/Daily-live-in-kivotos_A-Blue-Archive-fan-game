@@ -3,15 +3,18 @@
 [sub_resource type="GDScript" id="GDScript_settings_menu"]
 script/source = "extends Control
 
-@onready var render_scale_slider: HSlider = $VBoxContainer/RenderScaleSlider
-@onready var draw_distance_slider: HSlider = $VBoxContainer/DrawDistanceSlider
-@onready var shadow_tier_option: OptionButton = $VBoxContainer/ShadowTierOption
-@onready var max_students_spin: SpinBox = $VBoxContainer/MaxActiveStudentsSpinBox
-@onready var bloom_checkbox: CheckBox = $VBoxContainer/BloomCheckBox
-@onready var dof_checkbox: CheckBox = $VBoxContainer/DOFCheckBox
-@onready var particles_checkbox: CheckBox = $VBoxContainer/ParticlesCheckBox
-@onready var apply_button: Button = $VBoxContainer/ApplyButton
-@onready var reset_button: Button = $VBoxContainer/ResetButton
+signal back_requested()
+
+@onready var render_scale_slider: HSlider = $SettingsPanel/VBoxContainer/RenderScaleSlider
+@onready var draw_distance_slider: HSlider = $SettingsPanel/VBoxContainer/DrawDistanceSlider
+@onready var shadow_tier_option: OptionButton = $SettingsPanel/VBoxContainer/ShadowTierOption
+@onready var max_students_spin: SpinBox = $SettingsPanel/VBoxContainer/MaxActiveStudentsSpinBox
+@onready var bloom_checkbox: CheckBox = $SettingsPanel/VBoxContainer/BloomCheckBox
+@onready var dof_checkbox: CheckBox = $SettingsPanel/VBoxContainer/DOFCheckBox
+@onready var particles_checkbox: CheckBox = $SettingsPanel/VBoxContainer/ParticlesCheckBox
+@onready var apply_button: Button = $SettingsPanel/VBoxContainer/ApplyButton
+@onready var reset_button: Button = $SettingsPanel/VBoxContainer/ResetButton
+@onready var back_button: Button = $SettingsPanel/VBoxContainer/BackButton
 
 func _ready() -> void:
 	if shadow_tier_option.item_count == 0:
@@ -22,6 +25,7 @@ func _ready() -> void:
 
 	apply_button.pressed.connect(_on_apply_pressed)
 	reset_button.pressed.connect(_on_reset_pressed)
+	back_button.pressed.connect(func(): back_requested.emit())
 	_sync_from_manager()
 
 func _get_settings_manager() -> Node:
@@ -60,6 +64,7 @@ func _on_reset_pressed() -> void:
 "
 
 [node name="SettingsMenu" type="Control"]
+process_mode = 3
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -68,78 +73,94 @@ grow_horizontal = 2
 grow_vertical = 2
 script = SubResource("GDScript_settings_menu")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
+[node name="Backdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="SettingsPanel" type="PanelContainer" parent="."]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -180.0
-offset_top = -180.0
-offset_right = 180.0
-offset_bottom = 180.0
+offset_left = -200.0
+offset_top = -240.0
+offset_right = 200.0
+offset_bottom = 240.0
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="SettingsPanel"]
+layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="RenderScaleLabel" type="Label" parent="VBoxContainer"]
+[node name="RenderScaleLabel" type="Label" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Render Scale"
 
-[node name="RenderScaleSlider" type="HSlider" parent="VBoxContainer"]
+[node name="RenderScaleSlider" type="HSlider" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 min_value = 0.5
 max_value = 1.0
 step = 0.05
 value = 1.0
 
-[node name="DrawDistanceLabel" type="Label" parent="VBoxContainer"]
+[node name="DrawDistanceLabel" type="Label" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Draw Distance"
 
-[node name="DrawDistanceSlider" type="HSlider" parent="VBoxContainer"]
+[node name="DrawDistanceSlider" type="HSlider" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 min_value = 50.0
 max_value = 200.0
 step = 5.0
 value = 120.0
 
-[node name="ShadowTierLabel" type="Label" parent="VBoxContainer"]
+[node name="ShadowTierLabel" type="Label" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Shadow Quality"
 
-[node name="ShadowTierOption" type="OptionButton" parent="VBoxContainer"]
+[node name="ShadowTierOption" type="OptionButton" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 
-[node name="MaxActiveStudentsLabel" type="Label" parent="VBoxContainer"]
+[node name="MaxActiveStudentsLabel" type="Label" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Max Active Students"
 
-[node name="MaxActiveStudentsSpinBox" type="SpinBox" parent="VBoxContainer"]
+[node name="MaxActiveStudentsSpinBox" type="SpinBox" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 min_value = 1.0
 max_value = 10.0
 value = 5.0
 
-[node name="BloomCheckBox" type="CheckBox" parent="VBoxContainer"]
+[node name="BloomCheckBox" type="CheckBox" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 button_pressed = true
 text = "Bloom"
 
-[node name="DOFCheckBox" type="CheckBox" parent="VBoxContainer"]
+[node name="DOFCheckBox" type="CheckBox" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Depth of Field"
 
-[node name="ParticlesCheckBox" type="CheckBox" parent="VBoxContainer"]
+[node name="ParticlesCheckBox" type="CheckBox" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 button_pressed = true
 text = "Particles"
 
-[node name="ApplyButton" type="Button" parent="VBoxContainer"]
+[node name="ApplyButton" type="Button" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Apply"
 
-[node name="ResetButton" type="Button" parent="VBoxContainer"]
+[node name="ResetButton" type="Button" parent="SettingsPanel/VBoxContainer"]
 layout_mode = 2
 text = "Reset"
+
+[node name="BackButton" type="Button" parent="SettingsPanel/VBoxContainer"]
+layout_mode = 2
+text = "Back"

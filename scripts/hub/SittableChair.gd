@@ -14,3 +14,8 @@ func get_interaction_type() -> String:
 
 func interact() -> void:
 	is_occupied = not is_occupied
+	interaction_prompt = "[E] Stand up" if is_occupied else "[E] Sit"
+
+func get_seat_world_position() -> Vector3:
+	var base_pos: Vector3 = global_position if is_inside_tree() else position
+	return base_pos + seat_offset

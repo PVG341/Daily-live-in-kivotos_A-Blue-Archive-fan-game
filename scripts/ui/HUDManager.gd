@@ -6,6 +6,7 @@ var displayed_ap: int = 100
 var displayed_max_ap: int = 100
 var displayed_day: int = 1
 var displayed_credits: int = 0
+var displayed_interaction_prompt: String = ""
 
 var event_bus: Node = null
 
@@ -34,6 +35,21 @@ func update_credits(amount: int) -> void:
 	var credits_label := find_child("CreditsLabel", true, false) as Label
 	if credits_label != null:
 		credits_label.text = "%d Credits" % amount
+
+func update_interaction_prompt(prompt_text: String) -> void:
+	displayed_interaction_prompt = prompt_text
+	var container := find_child("InteractionPromptContainer", true, false) as Control
+	var label := find_child("InteractionPromptLabel", true, false) as Label
+	if prompt_text.strip_edges().is_empty():
+		if label != null:
+			label.text = ""
+		if container != null:
+			container.visible = false
+	else:
+		if label != null:
+			label.text = prompt_text
+		if container != null:
+			container.visible = true
 
 func _refresh_labels() -> void:
 	update_ap(displayed_ap, displayed_max_ap)

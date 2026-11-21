@@ -2,7 +2,7 @@
 
 * **Ngày cập nhật:** 2026-11-20
 * **Nhánh Git hiện tại:** `main`
-* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm vòng Final Review Fix Wave và Memory/RAM Leak Audit), toàn bộ **22/22 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
+* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm Final Review Fix Wave, Memory/RAM Leak Audit, và Phase 5 Mốc 1 Hub Greybox), toàn bộ **23/23 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
 * **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript, addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
 * **Tài liệu nguồn:**
   * Design Spec: [docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md](docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md)
@@ -90,7 +90,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 }
 ```
 
-### Danh sách 22 bộ test
+### Danh sách 23 bộ test
 * `godot --headless -s tests/test_data_models.gd`
 * `godot --headless -s tests/test_day_cycle.gd`
 * `godot --headless -s tests/test_save_load.gd`
@@ -113,6 +113,7 @@ Get-ChildItem tests/test_*.gd | Sort-Object Name | ForEach-Object {
 * `godot --headless -s tests/test_boss_encounters.gd`
 * `godot --headless -s tests/test_progression_system.gd`
 * `godot --headless -s tests/test_memory_leaks.gd`
+* `godot --headless -s tests/test_hub_scene_flow.gd`
 
 ---
 
