@@ -2,14 +2,50 @@
 
 [ext_resource type="Script" path="res://scripts/combat/CombatRoomData.gd" id="1_room_data"]
 [ext_resource type="Script" path="res://scripts/combat/CoverPoint3D.gd" id="2_cover"]
+[ext_resource type="Script" path="res://scripts/combat/TacticalTerrainZone.gd" id="3_terrain"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_combat"]
-vertices = PackedVector3Array(-12.5, 0.2, -10.5, -12.5, 0.2, 10.5, 12.5, 0.2, 10.5, 12.5, 0.2, -10.5)
+vertices = PackedVector3Array(-31.5, 0.2, -27.5, -31.5, 0.2, 27.5, 31.5, 0.2, 27.5, 31.5, 0.2, -27.5)
 polygons = [PackedInt32Array(0, 1, 2, 3)]
+
+[sub_resource type="StandardMaterial3D" id="Mat_water"]
+transparency = 1
+albedo_color = Color(0.15, 0.52, 0.85, 0.65)
+
+[sub_resource type="StandardMaterial3D" id="Mat_crater"]
+albedo_color = Color(0.28, 0.24, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_high_ground"]
+albedo_color = Color(0.75, 0.64, 0.38, 1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_bunker"]
+albedo_color = Color(0.38, 0.42, 0.46, 1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_bridge"]
+albedo_color = Color(0.52, 0.52, 0.56, 1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_house"]
+albedo_color = Color(0.78, 0.72, 0.64, 1)
+
+[sub_resource type="BoxShape3D" id="Shape_trench"]
+size = Vector3(12, 2, 7)
+
+[sub_resource type="BoxShape3D" id="Shape_crater"]
+size = Vector3(8, 2, 8)
+
+[sub_resource type="BoxShape3D" id="Shape_high"]
+size = Vector3(10, 3, 6)
+
+[sub_resource type="BoxShape3D" id="Shape_bunker"]
+size = Vector3(7, 3, 5)
+
+[sub_resource type="BoxShape3D" id="Shape_bridge"]
+size = Vector3(24, 3, 5)
 
 [node name="RoomCombat" type="Node3D"]
 script = ExtResource("1_room_data")
 room_type = "COMBAT"
+arena_size = Vector2(64, 56)
 
 [node name="NavigationRegion3D" type="NavigationRegion3D" parent="."]
 navigation_mesh = SubResource("NavigationMesh_combat")
@@ -17,101 +53,350 @@ navigation_mesh = SubResource("NavigationMesh_combat")
 [node name="ArenaFloor" type="CSGBox3D" parent="NavigationRegion3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
 use_collision = true
-size = Vector3(26, 0.2, 22)
+size = Vector3(64, 0.2, 56)
 
 [node name="WallNorth" type="CSGBox3D" parent="NavigationRegion3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -11)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -28)
 use_collision = true
-size = Vector3(26, 2, 0.4)
+size = Vector3(64, 3, 0.5)
 
 [node name="WallSouth" type="CSGBox3D" parent="NavigationRegion3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 11)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 28)
 use_collision = true
-size = Vector3(26, 2, 0.4)
+size = Vector3(64, 3, 0.5)
 
 [node name="WallWest" type="CSGBox3D" parent="NavigationRegion3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -13, 1, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -32, 1.5, 0)
 use_collision = true
-size = Vector3(0.4, 2, 22)
+size = Vector3(0.5, 3, 56)
 
 [node name="WallEast" type="CSGBox3D" parent="NavigationRegion3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 1.5, 0)
 use_collision = true
-size = Vector3(0.4, 2, 22)
+size = Vector3(0.5, 3, 56)
+
+[node name="TerrainFeatures" type="Node3D" parent="."]
+
+[node name="WaterTrenchWest" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 3)
+script = ExtResource("3_terrain")
+terrain_type = 0
+zone_extents = Vector2(6, 3.5)
+speed_multiplier = 0.55
+elevation_offset = -0.35
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/WaterTrenchWest"]
+shape = SubResource("Shape_trench")
+
+[node name="WaterSurface" type="CSGBox3D" parent="TerrainFeatures/WaterTrenchWest"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
+size = Vector3(12, 0.08, 7)
+material = SubResource("Mat_water")
+
+[node name="WaterTrenchEast" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 0, -3)
+script = ExtResource("3_terrain")
+terrain_type = 0
+zone_extents = Vector2(6, 3.5)
+speed_multiplier = 0.55
+elevation_offset = -0.35
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/WaterTrenchEast"]
+shape = SubResource("Shape_trench")
+
+[node name="WaterSurface" type="CSGBox3D" parent="TerrainFeatures/WaterTrenchEast"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
+size = Vector3(12, 0.08, 7)
+material = SubResource("Mat_water")
+
+[node name="CraterPitCenter" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6)
+script = ExtResource("3_terrain")
+terrain_type = 1
+zone_extents = Vector2(4, 4)
+speed_multiplier = 0.82
+damage_taken_multiplier = 0.75
+elevation_offset = -0.45
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/CraterPitCenter"]
+shape = SubResource("Shape_crater")
+
+[node name="CraterDisc" type="CSGCylinder3D" parent="TerrainFeatures/CraterPitCenter"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.02, 0)
+radius = 4.0
+height = 0.05
+material = SubResource("Mat_crater")
+
+[node name="HighGroundPlayer" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0, 14)
+script = ExtResource("3_terrain")
+terrain_type = 2
+zone_extents = Vector2(5, 3)
+speed_multiplier = 1.0
+range_bonus_multiplier = 1.25
+elevation_offset = 1.6
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/HighGroundPlayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("Shape_high")
+
+[node name="PlatformDeck" type="CSGBox3D" parent="TerrainFeatures/HighGroundPlayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
+use_collision = true
+size = Vector3(10, 1.6, 6)
+material = SubResource("Mat_high_ground")
+
+[node name="AccessRamp" type="CSGBox3D" parent="TerrainFeatures/HighGroundPlayer"]
+transform = Transform3D(0.928, -0.371, 0, 0.371, 0.928, 0, 0, 0, 1, 6.8, 0.75, 0)
+use_collision = true
+size = Vector3(4.5, 0.25, 2.8)
+material = SubResource("Mat_high_ground")
+
+[node name="Parapet" type="CSGBox3D" parent="TerrainFeatures/HighGroundPlayer"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.05, -2.8)
+use_collision = true
+size = Vector3(8, 0.9, 0.4)
+material = SubResource("Mat_high_ground")
+
+[node name="HighGroundEnemy" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0, -14)
+script = ExtResource("3_terrain")
+terrain_type = 2
+zone_extents = Vector2(5, 3)
+speed_multiplier = 1.0
+range_bonus_multiplier = 1.25
+elevation_offset = 1.6
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/HighGroundEnemy"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("Shape_high")
+
+[node name="PlatformDeck" type="CSGBox3D" parent="TerrainFeatures/HighGroundEnemy"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
+use_collision = true
+size = Vector3(10, 1.6, 6)
+material = SubResource("Mat_high_ground")
+
+[node name="AccessRamp" type="CSGBox3D" parent="TerrainFeatures/HighGroundEnemy"]
+transform = Transform3D(0.928, 0.371, 0, -0.371, 0.928, 0, 0, 0, 1, -6.8, 0.75, 0)
+use_collision = true
+size = Vector3(4.5, 0.25, 2.8)
+material = SubResource("Mat_high_ground")
+
+[node name="Parapet" type="CSGBox3D" parent="TerrainFeatures/HighGroundEnemy"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.05, 2.8)
+use_collision = true
+size = Vector3(8, 0.9, 0.4)
+material = SubResource("Mat_high_ground")
+
+[node name="CentralBunker" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1)
+script = ExtResource("3_terrain")
+terrain_type = 3
+zone_extents = Vector2(3.5, 2.5)
+speed_multiplier = 1.0
+damage_taken_multiplier = 0.65
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+shape = SubResource("Shape_bunker")
+
+[node name="BunkerWestWall" type="CSGBox3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.3, 1.25, 0)
+use_collision = true
+size = Vector3(0.5, 2.5, 5)
+material = SubResource("Mat_bunker")
+
+[node name="BunkerEastWall" type="CSGBox3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.3, 1.25, 0)
+use_collision = true
+size = Vector3(0.5, 2.5, 5)
+material = SubResource("Mat_bunker")
+
+[node name="BunkerSlitWallNorth" type="CSGBox3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 0.65, -2.3)
+use_collision = true
+size = Vector3(2.8, 1.3, 0.4)
+material = SubResource("Mat_bunker")
+
+[node name="BunkerSlitWallEast" type="CSGBox3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 0.65, -2.3)
+use_collision = true
+size = Vector3(2.8, 1.3, 0.4)
+material = SubResource("Mat_bunker")
+
+[node name="BunkerRoof" type="CSGBox3D" parent="TerrainFeatures/CentralBunker"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.6, 0)
+use_collision = true
+size = Vector3(7.4, 0.25, 5.4)
+material = SubResource("Mat_bunker")
+
+[node name="OverpassBridge" type="Area3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -10)
+script = ExtResource("3_terrain")
+terrain_type = 4
+zone_extents = Vector2(12, 2.5)
+speed_multiplier = 1.0
+damage_taken_multiplier = 0.75
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 0)
+shape = SubResource("Shape_bridge")
+
+[node name="BridgeDeck" type="CSGBox3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.1, 0)
+use_collision = true
+size = Vector3(24, 0.45, 5)
+material = SubResource("Mat_bridge")
+
+[node name="BridgePierSW" type="CSGBox3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 1.5, 1.8)
+use_collision = true
+size = Vector3(1.2, 3, 1.2)
+material = SubResource("Mat_bridge")
+
+[node name="BridgePierSE" type="CSGBox3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1.5, 1.8)
+use_collision = true
+size = Vector3(1.2, 3, 1.2)
+material = SubResource("Mat_bridge")
+
+[node name="BridgePierNW" type="CSGBox3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 1.5, -1.8)
+use_collision = true
+size = Vector3(1.2, 3, 1.2)
+material = SubResource("Mat_bridge")
+
+[node name="BridgePierNE" type="CSGBox3D" parent="TerrainFeatures/OverpassBridge"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1.5, -1.8)
+use_collision = true
+size = Vector3(1.2, 3, 1.2)
+material = SubResource("Mat_bridge")
+
+[node name="UrbanHouseWest" type="Node3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 0, -5)
+
+[node name="WallNorth" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseWest"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, -3)
+use_collision = true
+size = Vector3(8, 3.6, 0.4)
+material = SubResource("Mat_house")
+
+[node name="WallWest" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseWest"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 1.8, 0)
+use_collision = true
+size = Vector3(0.4, 3.6, 6)
+material = SubResource("Mat_house")
+
+[node name="WallEast" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseWest"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 1.8, -1.2)
+use_collision = true
+size = Vector3(0.4, 3.6, 3.6)
+material = SubResource("Mat_house")
+
+[node name="HouseRoof" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseWest"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.75, 0)
+use_collision = true
+size = Vector3(8.6, 0.3, 6.6)
+material = SubResource("Mat_house")
+
+[node name="UrbanHouseEast" type="Node3D" parent="TerrainFeatures"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 8)
+
+[node name="WallNorth" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseEast"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, -3)
+use_collision = true
+size = Vector3(8, 3.6, 0.4)
+material = SubResource("Mat_house")
+
+[node name="WallEast" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseEast"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 1.8, 0)
+use_collision = true
+size = Vector3(0.4, 3.6, 6)
+material = SubResource("Mat_house")
+
+[node name="WallSouth" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseEast"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, 3)
+use_collision = true
+size = Vector3(8, 3.6, 0.4)
+material = SubResource("Mat_house")
+
+[node name="HouseRoof" type="CSGBox3D" parent="TerrainFeatures/UrbanHouseEast"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.75, 0)
+use_collision = true
+size = Vector3(8.6, 0.3, 6.6)
+material = SubResource("Mat_house")
 
 [node name="CoverPoints" type="Node3D" parent="."]
 
-[node name="CoverHalfLeft" type="Marker3D" parent="CoverPoints"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, 2.5)
+[node name="CoverCraterRim" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7.2)
 script = ExtResource("2_cover")
 cover_type = 0
 cover_direction = Vector3(0, 0, -1)
 
-[node name="Barricade" type="CSGBox3D" parent="CoverPoints/CoverHalfLeft"]
+[node name="Barricade" type="CSGBox3D" parent="CoverPoints/CoverCraterRim"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -0.9)
 use_collision = true
-size = Vector3(2.4, 0.9, 0.5)
+size = Vector3(3.2, 0.9, 0.5)
 
-[node name="CoverHalfRight" type="Marker3D" parent="CoverPoints"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 2.5)
+[node name="CoverBunkerInside" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.5)
+script = ExtResource("2_cover")
+cover_type = 1
+cover_direction = Vector3(0, 0, -1)
+
+[node name="CoverBridgeWest" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0, -7.2)
+script = ExtResource("2_cover")
+cover_type = 1
+cover_direction = Vector3(0, 0, -1)
+
+[node name="CoverBridgeEast" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, -7.2)
+script = ExtResource("2_cover")
+cover_type = 1
+cover_direction = Vector3(0, 0, -1)
+
+[node name="CoverHouseWest" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21, 0, -3.5)
+script = ExtResource("2_cover")
+cover_type = 1
+cover_direction = Vector3(0, 0, -1)
+
+[node name="CoverHighGround" type="Marker3D" parent="CoverPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 1.6, 12.2)
 script = ExtResource("2_cover")
 cover_type = 0
 cover_direction = Vector3(0, 0, -1)
-
-[node name="Barricade" type="CSGBox3D" parent="CoverPoints/CoverHalfRight"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -0.9)
-use_collision = true
-size = Vector3(2.4, 0.9, 0.5)
-
-[node name="CoverFullWest" type="Marker3D" parent="CoverPoints"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -0.5)
-script = ExtResource("2_cover")
-cover_type = 1
-cover_direction = Vector3(0, 0, -1)
-
-[node name="Barricade" type="CSGBox3D" parent="CoverPoints/CoverFullWest"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, -0.9)
-use_collision = true
-size = Vector3(2.2, 1.7, 0.6)
-
-[node name="CoverFullEast" type="Marker3D" parent="CoverPoints"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, -0.5)
-script = ExtResource("2_cover")
-cover_type = 1
-cover_direction = Vector3(0, 0, -1)
-
-[node name="Barricade" type="CSGBox3D" parent="CoverPoints/CoverFullEast"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, -0.9)
-use_collision = true
-size = Vector3(2.2, 1.7, 0.6)
 
 [node name="PlayerSpawns" type="Node3D" parent="."]
 
 [node name="Spawn1" type="Marker3D" parent="PlayerSpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.5, 0, 7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7.5, 0, 20)
 
 [node name="Spawn2" type="Marker3D" parent="PlayerSpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 0, 7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.5, 0, 20)
 
 [node name="Spawn3" type="Marker3D" parent="PlayerSpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 0, 7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.5, 0, 20)
 
 [node name="Spawn4" type="Marker3D" parent="PlayerSpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.5, 0, 7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.5, 0, 20)
 
 [node name="EnemySpawns" type="Node3D" parent="."]
 
 [node name="EnemySpawn1" type="Marker3D" parent="EnemySpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 1.6, -14)
 
 [node name="EnemySpawn2" type="Marker3D" parent="EnemySpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, -7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -17)
 
 [node name="EnemySpawn3" type="Marker3D" parent="EnemySpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9, 0, -18)
 
 [node name="EnemySpawn4" type="Marker3D" parent="EnemySpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, -7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 0, -18)
 
 [node name="EnemySpawn5" type="Marker3D" parent="EnemySpawns"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, -7.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0, -15)

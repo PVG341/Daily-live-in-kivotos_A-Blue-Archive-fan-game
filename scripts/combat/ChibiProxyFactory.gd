@@ -2,13 +2,14 @@
 class_name ChibiProxyFactory
 extends RefCounted
 
-## Builds lightweight Chibi-proportioned 3D proxy visuals, Halo, SelectionRing, and 3D HP label on unit.
+## Builds lightweight Chibi-proportioned 3D proxy visuals, Halo, SelectionRing, AttackRangeRing, TargetReticle, OrderStatusPillar, and 3D HP label on unit.
 func attach_unit_visuals(
 	unit: Node3D,
 	display_name: String,
 	primary_color: Color,
 	halo_color: Color,
-	scale_factor: float = 1.0
+	scale_factor: float = 1.0,
+	attack_range: float = 10.0
 ) -> void:
 	if unit == null:
 		return
@@ -87,6 +88,84 @@ func attach_unit_visuals(
 	sel_ring_inst.visible = false
 	vis_root.add_child(sel_ring_inst)
 
+	# Attack Range Ring (shown when selected)
+	var range_ring_inst := MeshInstance3D.new()
+	range_ring_inst.name = "AttackRangeRing"
+	var range_mesh := TorusMesh.new()
+	range_mesh.inner_radius = maxf(0.5, attack_range - 0.12)
+	range_mesh.outer_radius = maxf(0.6, attack_range)
+	var range_mat := StandardMaterial3D.new()
+	range_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	range_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	range_mat.albedo_color = Color(0.2, 0.85, 1.0, 0.32)
+	range_mesh.material = range_mat
+	range_ring_inst.mesh = range_mesh
+	range_ring_inst.position = Vector3(0.0, 0.04, 0.0)
+	range_ring_inst.visible = false
+	vis_root.add_child(range_ring_inst)
+
+	# Target Reticle (shown on focused enemies)
+	var target_reticle := Node3D.new()
+	target_reticle.name = "TargetReticle"
+	target_reticle.visible = false
+	vis_root.add_child(target_reticle)
+
+	var reticle_ring_inst := MeshInstance3D.new()
+	reticle_ring_inst.name = "ReticleRing"
+	var reticle_mesh := TorusMesh.new()
+	reticle_mesh.inner_radius = 0.55 * scale_factor
+	reticle_mesh.outer_radius = 0.68 * scale_factor
+	var reticle_mat := StandardMaterial3D.new()
+	reticle_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	reticle_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	reticle_mat.albedo_color = Color(1.0, 0.18, 0.18, 0.9)
+	reticle_mesh.material = reticle_mat
+	reticle_ring_inst.mesh = reticle_mesh
+	reticle_ring_inst.position = Vector3(0.0, 0.06, 0.0)
+	target_reticle.add_child(reticle_ring_inst)
+
+	var target_tag := Label3D.new()
+	target_tag.name = "TargetTag"
+	target_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	target_tag.position = Vector3(0.0, 2.05 * scale_factor, 0.0)
+	target_tag.font_size = 26
+	target_tag.outline_size = 6
+	target_tag.modulate = Color(1.0, 0.25, 0.25)
+	target_tag.text = "▼ TARGET ▼"
+	target_reticle.add_child(target_tag)
+
+	# Overhead Order Status Light Pillar + Icon
+	var order_pillar := Node3D.new()
+	order_pillar.name = "OrderStatusPillar"
+	order_pillar.visible = false
+	vis_root.add_child(order_pillar)
+
+	var beam_inst := MeshInstance3D.new()
+	beam_inst.name = "LightBeam"
+	var beam_mesh := CylinderMesh.new()
+	beam_mesh.top_radius = 0.22 * scale_factor
+	beam_mesh.bottom_radius = 0.32 * scale_factor
+	beam_mesh.height = 2.4 * scale_factor
+	var beam_mat := StandardMaterial3D.new()
+	beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	beam_mat.albedo_color = Color(1.0, 0.78, 0.15, 0.42)
+	beam_mesh.material = beam_mat
+	beam_inst.mesh = beam_mesh
+	beam_inst.position = Vector3(0.0, 1.2 * scale_factor, 0.0)
+	order_pillar.add_child(beam_inst)
+
+	var order_icon := Label3D.new()
+	order_icon.name = "OrderIconLabel"
+	order_icon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	order_icon.position = Vector3(0.0, 2.55 * scale_factor, 0.0)
+	order_icon.font_size = 26
+	order_icon.outline_size = 6
+	order_icon.modulate = Color.WHITE
+	order_icon.text = ""
+	order_pillar.add_child(order_icon)
+
 	# 3D billboarded HP bar label
 	var hp_label := Label3D.new()
 	hp_label.name = "HPBarLabel"
@@ -98,13 +177,80 @@ func attach_unit_visuals(
 	hp_label.text = display_name
 	vis_root.add_child(hp_label)
 
-## Toggles the ground RTS selection ring visibility on a unit.
-func set_unit_selected(unit: Node3D, selected: bool) -> void:
+## Toggles the ground RTS selection ring and attack range ring visibility on a unit.
+func set_unit_selected(unit: Node3D, selected: bool, show_range: bool = true) -> void:
 	if unit == null or not is_instance_valid(unit):
 		return
 	var ring := unit.get_node_or_null("VisualRoot/SelectionRing") as Node3D
 	if ring != null:
 		ring.visible = selected
+	var range_ring := unit.get_node_or_null("VisualRoot/AttackRangeRing") as Node3D
+	if range_ring != null:
+		range_ring.visible = (selected and show_range)
+
+## Updates the AttackRangeRing torus radii to match effective attack range (e.g., high ground bonus).
+func update_unit_attack_range_ring(unit: Node3D, effective_range: float) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	var range_ring := unit.get_node_or_null("VisualRoot/AttackRangeRing") as MeshInstance3D
+	if range_ring != null and range_ring.mesh is TorusMesh:
+		var tm := range_ring.mesh as TorusMesh
+		var new_outer: float = maxf(0.6, effective_range)
+		var new_inner: float = maxf(0.5, new_outer - 0.12)
+		if not is_equal_approx(tm.outer_radius, new_outer):
+			tm.inner_radius = new_inner
+			tm.outer_radius = new_outer
+
+## Toggles the red target reticle visibility on an enemy unit.
+func set_unit_targeted(unit: Node3D, targeted: bool) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	var reticle := unit.get_node_or_null("VisualRoot/TargetReticle") as Node3D
+	if reticle != null:
+		reticle.visible = targeted
+
+## Updates the overhead OrderStatusPillar light beam and icon label for active RTS commands.
+func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	var pillar := unit.get_node_or_null("VisualRoot/OrderStatusPillar") as Node3D
+	if pillar == null:
+		return
+	if order_type.is_empty():
+		pillar.visible = false
+		return
+
+	var beam_color := Color(0.2, 0.85, 1.0, 0.30)
+	var icon_text := order_type
+	match order_type:
+		"HOLD_POSITION":
+			beam_color = Color(1.0, 0.78, 0.15, 0.42)
+			icon_text = "🛡️ HOLD POS"
+		"HOLD_FIRE":
+			beam_color = Color(0.60, 0.42, 1.0, 0.42)
+			icon_text = "🚫 HOLD FIRE"
+		"FOCUS_FIRE":
+			beam_color = Color(1.0, 0.22, 0.22, 0.35)
+			icon_text = "🎯 FOCUS FIRE"
+		"COVER":
+			beam_color = Color(0.20, 0.95, 0.55, 0.35)
+			icon_text = "🧱 TAKE COVER"
+		"MOVE":
+			beam_color = Color(0.20, 0.85, 1.0, 0.30)
+			icon_text = "➔ MOVING"
+
+	var beam := pillar.get_node_or_null("LightBeam") as MeshInstance3D
+	if beam != null and beam.mesh is CylinderMesh:
+		var cm := beam.mesh as CylinderMesh
+		if cm.material is StandardMaterial3D:
+			(cm.material as StandardMaterial3D).albedo_color = beam_color
+
+	var lbl := pillar.get_node_or_null("OrderIconLabel") as Label3D
+	if lbl != null:
+		lbl.text = icon_text
+		lbl.modulate = Color(beam_color.r, beam_color.g, beam_color.b, 1.0)
+
+	pillar.visible = true
 
 ## Updates the floating 3D HP label above a unit.
 func update_unit_hp_label(unit: Node3D, display_name: String, current_hp: int, max_hp: int) -> void:
@@ -113,6 +259,74 @@ func update_unit_hp_label(unit: Node3D, display_name: String, current_hp: int, m
 	var lbl := unit.get_node_or_null("VisualRoot/HPBarLabel") as Label3D
 	if lbl != null:
 		lbl.text = "%s\n%d/%d" % [display_name, maxi(0, current_hp), maxi(1, max_hp)]
+
+## Creates a 3D ground disc for previewing EX-Skill AoE radius under the cursor.
+func create_skill_preview_disc() -> Node3D:
+	var root := Node3D.new()
+	root.name = "SkillPreviewDisc"
+	root.visible = false
+
+	var disc := MeshInstance3D.new()
+	disc.name = "DiscMesh"
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 1.0
+	mesh.bottom_radius = 1.0
+	mesh.height = 0.06
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1.0, 0.82, 0.15, 0.38)
+	mesh.material = mat
+	disc.mesh = mesh
+	disc.position = Vector3(0.0, 0.04, 0.0)
+	root.add_child(disc)
+	return root
+
+## Positions and scales the 3D EX-Skill AoE preview disc on the ground.
+func update_skill_preview_disc(disc: Node3D, world_pos: Vector3, radius: float, visible_state: bool) -> void:
+	if disc == null or not is_instance_valid(disc):
+		return
+	disc.visible = visible_state
+	if visible_state:
+		var r: float = maxf(0.25, radius)
+		disc.position = Vector3(world_pos.x, world_pos.y, world_pos.z)
+		disc.scale = Vector3(r, 1.0, r)
+
+## Creates a 3D beacon marker showing Move/Cover destinations.
+func create_order_beacon() -> Node3D:
+	var root := Node3D.new()
+	root.name = "OrderBeacon"
+	root.visible = false
+
+	var pillar := MeshInstance3D.new()
+	pillar.name = "BeaconMesh"
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.12
+	mesh.bottom_radius = 0.35
+	mesh.height = 1.4
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_color = Color(0.2, 0.9, 1.0, 0.45)
+	mesh.material = mat
+	pillar.mesh = mesh
+	pillar.position = Vector3(0.0, 0.7, 0.0)
+	root.add_child(pillar)
+	return root
+
+## Positions and colors the 3D Move/Cover order destination beacon.
+func update_order_beacon(beacon: Node3D, world_pos: Vector3, color: Color, visible_state: bool) -> void:
+	if beacon == null or not is_instance_valid(beacon):
+		return
+	beacon.visible = visible_state
+	if visible_state:
+		beacon.position = world_pos
+		var pillar := beacon.get_node_or_null("BeaconMesh") as MeshInstance3D
+		if pillar != null and pillar.mesh is CylinderMesh:
+			var cm := pillar.mesh as CylinderMesh
+			if cm.material is StandardMaterial3D:
+				(cm.material as StandardMaterial3D).albedo_color = color
 
 ## Attaches translucent red telegraph discs to a TelegraphedAoE node.
 func attach_aoe_visuals(aoe: Node3D, radius: float) -> void:

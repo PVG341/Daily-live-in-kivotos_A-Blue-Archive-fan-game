@@ -6,6 +6,9 @@ var displayed_cost: float = 0.0
 var displayed_max_cost: float = 10.0
 var displayed_wave: int = 1
 var striker_hp: Dictionary = {}
+var striker_orders: Dictionary = {}
+var selected_striker_ids: Array[String] = []
+var displayed_selection_summary: String = ""
 var active_buff_ids: Array[String] = []
 
 func _ready() -> void:
@@ -31,13 +34,40 @@ func update_wave(wave_index: int) -> void:
 	if wave_label != null:
 		wave_label.text = "Wave %d" % wave_index
 
+func update_selected_units(selected_ids: Array[String], summary_text: String = "") -> void:
+	selected_striker_ids = selected_ids.duplicate()
+	if not summary_text.strip_edges().is_empty():
+		displayed_selection_summary = summary_text
+	elif selected_striker_ids.is_empty():
+		displayed_selection_summary = "Chưa chọn học sinh (Kéo chuột trái chọn nhóm)"
+	else:
+		displayed_selection_summary = "Đang chọn (%d): %s" % [selected_striker_ids.size(), ", ".join(selected_striker_ids)]
+
+	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
+	if sel_lbl != null:
+		sel_lbl.text = displayed_selection_summary
+	_refresh_striker_portraits()
+
+func update_striker_order(student_id: String, order_type: String) -> void:
+	if order_type.is_empty():
+		striker_orders.erase(student_id)
+	else:
+		striker_orders[student_id] = order_type
+	_refresh_striker_portraits()
+
 func set_active_buff_ids(buff_ids: Array[String]) -> void:
 	active_buff_ids = buff_ids.duplicate()
 	_refresh_buff_row()
 
 func clear_hud() -> void:
 	striker_hp.clear()
+	striker_orders.clear()
+	selected_striker_ids.clear()
 	active_buff_ids.clear()
+	displayed_selection_summary = ""
+	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
+	if sel_lbl != null:
+		sel_lbl.text = "Chưa chọn học sinh (Kéo chuột trái chọn nhóm)"
 	_refresh_striker_portraits()
 	_refresh_buff_row()
 
@@ -62,7 +92,12 @@ func _refresh_striker_portraits() -> void:
 			existing = Label.new()
 			existing.name = "Portrait_%s" % sid
 			portraits.add_child(existing)
-		existing.text = "%s: %d/%d" % [sid, hp_vec.x, hp_vec.y]
+		var is_sel: bool = selected_striker_ids.has(sid)
+		var order_str: String = str(striker_orders.get(sid, ""))
+		var order_tag: String = " (%s)" % order_str if not order_str.is_empty() else ""
+		var base_text: String = "%s: %d/%d%s" % [sid, hp_vec.x, hp_vec.y, order_tag]
+		existing.text = "★ [%s]" % base_text if is_sel else base_text
+		existing.modulate = Color(0.35, 0.95, 1.0) if is_sel else Color.WHITE
 
 func _refresh_buff_row() -> void:
 	var buff_row := find_child("BuffRow", true, false) as Container

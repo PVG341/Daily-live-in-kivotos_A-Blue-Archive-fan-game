@@ -69,6 +69,10 @@ var active_aoes: Array[TelegraphedAoEScript] = []
 var special_students: Array[StudentData] = []
 var current_draft_cards: Array[Dictionary] = []
 
+var current_room_info: CombatRoomDataScript = null
+var skill_preview_disc: Node3D = null
+var order_beacon: Node3D = null
+
 var run_finished: bool = false
 var room_elapsed_time: float = 0.0
 var _boss_aoe_timer: float = 2.5
@@ -86,6 +90,16 @@ func _init() -> void:
 func _ready() -> void:
 	_setup_child_managers()
 	_resolve_scene_nodes()
+	if camera_rig != null:
+		camera_rig.max_zoom = 38.0
+		camera_rig.bounds_min = Vector2(-55.0, -55.0)
+		camera_rig.bounds_max = Vector2(55.0, 55.0)
+		camera_rig.adjust_zoom(6.0)
+	if effects_container != null:
+		skill_preview_disc = proxy_factory.create_skill_preview_disc()
+		effects_container.add_child(skill_preview_disc)
+		order_beacon = proxy_factory.create_order_beacon()
+		effects_container.add_child(order_beacon)
 	_connect_signals()
 	_ensure_combat_input_bindings()
 	_setup_default_squad()
@@ -151,11 +165,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			_handle_right_click_order(mb.position)
 
-	elif event is InputEventMouseMotion and _is_dragging_box:
+	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		if selection_box_overlay != null and selection_manager != null:
-			var rect: Rect2 = selection_manager.selection_math.normalize_selection_rect(_drag_start_pos, mm.position)
-			selection_box_overlay.set_drag_rect(true, rect)
+		if targeting_overlay != null and targeting_overlay.is_targeting:
+			var wpos: Vector3 = targeting_overlay.update_preview(mm.position, _get_isometric_camera(), 0.0)
+			var sk_rad: float = targeting_overlay.active_skill.aoe_radius if targeting_overlay.active_skill != null else 4.0
+			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true)
+		elif _is_dragging_box:
+			if selection_box_overlay != null and selection_manager != null:
+				var rect: Rect2 = selection_manager.selection_math.normalize_selection_rect(_drag_start_pos, mm.position)
+				selection_box_overlay.set_drag_rect(true, rect)
 
 ## Starts or restarts a 4-room Roguelike dungeon run.
 func start_run(difficulty: int = 1) -> void:
@@ -255,8 +274,9 @@ func step_combat(delta: float) -> void:
 				event_manager.trigger_event(evt)
 				_resolve_random_event(evt)
 
-	# 7. Sync HUD & check defeat
+	# 7. Sync HUD, tactical 2D overlay & check defeat
 	_refresh_all_unit_labels()
+	_update_tactical_2d_overlay()
 	if _get_living_strikers().is_empty() and not squad_units.is_empty():
 		_finish_run(false)
 
@@ -436,7 +456,8 @@ func _spawn_persistent_strikers() -> void:
 		var unit := CombatUnitScript.new()
 		unit.name = sd.student_name
 		unit.setup(sd)
-		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0)
+		unit.order_completed.connect(_on_striker_order_completed)
+		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0, sd.attack_range)
 		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp)
 		units_container.add_child(unit)
 		squad_units.append(unit)
@@ -466,6 +487,7 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	room_manager.current_room_node = room_inst
 
 	var room_info := room_inst as CombatRoomDataScript
+	current_room_info = room_info
 	var player_spawns: Array[Vector3] = room_info.get_player_spawn_positions() if room_info != null else []
 	var persisted_hp: Dictionary = room_manager.get_squad_persistent_state()
 
@@ -483,11 +505,18 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		if i < player_spawns.size():
 			unit.position = player_spawns[i]
 		else:
-			unit.position = Vector3(-4.5 + float(i) * 3.0, 0.0, 7.5)
+			unit.position = Vector3(-4.5 + float(i) * 3.0, 0.0, 20.0)
 		proxy_factory.set_unit_selected(unit, false)
+		proxy_factory.update_unit_order_visual(unit, "")
 		proxy_factory.update_unit_hp_label(unit, unit.name, unit.current_hp, unit.max_hp)
 		if combat_hud != null and unit.unit_data != null:
 			combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
+			combat_hud.update_striker_order(unit.unit_data.id, "")
+
+	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
+	proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
+	if selection_box_overlay != null:
+		selection_box_overlay.update_tactical_markers([], [])
 
 	if room_info != null:
 		cover_points = room_info.get_cover_points()
@@ -614,9 +643,18 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	var cd: float = maxf(0.0, float(_unit_cooldowns.get(uid, 0.0)) - delta)
 	_unit_cooldowns[uid] = cd
 
+	var atk_mods: Dictionary = _get_terrain_mods(striker.position)
+	var eff_range: float = striker.attack_range * float(atk_mods.get("range_bonus_multiplier", 1.0))
+	proxy_factory.update_unit_attack_range_ring(striker, eff_range)
+
+	# Sync elevation smoothly even when standing
+	var target_elev: float = float(atk_mods.get("elevation_offset", 0.0))
+	if not is_equal_approx(striker.position.y, target_elev):
+		striker.position.y = lerpf(striker.position.y, target_elev, minf(1.0, delta * 8.0))
+
 	if striker.has_player_order:
 		if not striker.check_emergency_override():
-			_execute_player_order(striker, delta, cd)
+			_execute_player_order(striker, delta, cd, eff_range)
 			return
 
 	var role: StudentData.CombatRole = striker.unit_data.role if striker.unit_data != null else StudentData.CombatRole.DAMAGE_DEALER
@@ -637,7 +675,7 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	if action == "HEAL_ALLY" and target is CombatUnitScript:
 		var ally := target as CombatUnitScript
 		var dist: float = striker.position.distance_to(ally.position)
-		if dist > striker.attack_range:
+		if dist > eff_range:
 			_move_unit_toward(striker, ally.position, delta)
 		elif cd <= 0.0 and ally.current_hp < ally.max_hp:
 			ally.heal(striker.atk * 2)
@@ -650,30 +688,35 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 			cp.claim(striker)
 			if cd <= 0.0 and not enemies.is_empty():
 				var nearest_e := enemies[0] as CombatUnitScript
-				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), nearest_e.position + Vector3(0, 0.7, 0), 22.0, striker.atk, striker, nearest_e)
+				var raw_dmg: int = striker.atk
+				var def_mult: float = float(_get_terrain_mods(nearest_e.position).get("damage_taken_multiplier", 1.0))
+				var final_dmg: int = maxi(1, int(round(float(raw_dmg) * def_mult)))
+				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), nearest_e.position + Vector3(0, 0.7, 0), 22.0, final_dmg, striker, nearest_e)
 				_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 	elif (action == "ATTACK_TARGET" or action == "TAUNT_ENGAGE") and target is CombatUnitScript:
 		var enemy := target as CombatUnitScript
 		var dist: float = striker.position.distance_to(enemy.position)
-		if dist > striker.attack_range:
+		if dist > eff_range:
 			_move_unit_toward(striker, enemy.position, delta)
 		elif cd <= 0.0:
 			var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
+			var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
+			dmg = maxi(1, int(round(float(dmg) * def_mult)))
 			projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, enemy)
 			_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 	elif action == "POSITION_AND_BUFF" and target is Vector3:
 		_move_unit_toward(striker, target as Vector3, delta)
 
-func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float) -> void:
+func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, eff_range: float) -> void:
 	var uid: int = striker.get_instance_id()
 	match striker.current_order_type:
 		"MOVE":
-			if striker.position.distance_to(striker.order_target_position) <= 0.4:
+			if Vector2(striker.position.x, striker.position.z).distance_to(Vector2(striker.order_target_position.x, striker.order_target_position.z)) <= 0.45:
 				striker.clear_player_order()
 			else:
 				_move_unit_toward(striker, striker.order_target_position, delta)
 		"COVER":
-			if striker.position.distance_to(striker.order_target_position) <= 0.5:
+			if Vector2(striker.position.x, striker.position.z).distance_to(Vector2(striker.order_target_position.x, striker.order_target_position.z)) <= 0.55:
 				if striker.order_target_node is CoverPoint3DScript:
 					(striker.order_target_node as CoverPoint3DScript).claim(striker)
 				striker.clear_player_order()
@@ -685,10 +728,12 @@ func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float) -
 				striker.clear_player_order()
 				return
 			var dist: float = striker.position.distance_to(target_enemy.position)
-			if dist > striker.attack_range:
+			if dist > eff_range:
 				_move_unit_toward(striker, target_enemy.position, delta)
 			elif cd <= 0.0:
 				var dmg: int = striker.damage_resolver.calculate_damage(striker, target_enemy, card_manager.get_active_buffs())
+				var def_mult: float = float(_get_terrain_mods(target_enemy.position).get("damage_taken_multiplier", 1.0))
+				dmg = maxi(1, int(round(float(dmg) * def_mult)))
 				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), target_enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, target_enemy)
 				_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 		"HOLD_POSITION":
@@ -701,6 +746,12 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	var cd: float = maxf(0.0, float(_unit_cooldowns.get(uid, 0.0)) - delta)
 	_unit_cooldowns[uid] = cd
 
+	var enemy_mods: Dictionary = _get_terrain_mods(enemy.position)
+	var eff_range: float = enemy.attack_range * float(enemy_mods.get("range_bonus_multiplier", 1.0))
+	var target_elev: float = float(enemy_mods.get("elevation_offset", 0.0))
+	if not is_equal_approx(enemy.position.y, target_elev):
+		enemy.position.y = lerpf(enemy.position.y, target_elev, minf(1.0, delta * 8.0))
+
 	var decision: Dictionary = enemy_ai.evaluate(enemy, allies)
 	var action: String = str(decision.get("action", "IDLE"))
 	var target: Variant = decision.get("target", null)
@@ -709,10 +760,12 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 
 	var ally := target as CombatUnitScript
 	var dist: float = enemy.position.distance_to(ally.position)
-	if action == "RUSH" and dist > enemy.attack_range:
+	if action == "RUSH" and dist > eff_range:
 		_move_unit_toward(enemy, ally.position, delta)
-	elif dist <= enemy.attack_range and cd <= 0.0:
+	elif dist <= eff_range and cd <= 0.0:
 		var dmg: int = enemy.damage_resolver.calculate_damage(enemy, ally, [])
+		var ally_mult: float = float(_get_terrain_mods(ally.position).get("damage_taken_multiplier", 1.0))
+		dmg = maxi(1, int(round(float(dmg) * ally_mult)))
 		projectile_manager.spawn_projectile(enemy.position + Vector3(0, 0.7, 0), ally.position + Vector3(0, 0.7, 0), 18.0, dmg, enemy, ally)
 		_unit_cooldowns[uid] = ENEMY_ATTACK_COOLDOWN
 
@@ -722,8 +775,23 @@ func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float
 	var dist: float = to_target.length()
 	if dist <= 0.15 or delta <= 0.0:
 		return
-	var step: float = minf(dist, unit.speed * delta)
+	var mods: Dictionary = _get_terrain_mods(unit.position)
+	var speed_mult: float = float(mods.get("speed_multiplier", 1.0))
+	var step: float = minf(dist, unit.speed * speed_mult * delta)
 	unit.position += (to_target / dist) * step
+	var new_elev: float = float(_get_terrain_mods(unit.position).get("elevation_offset", 0.0))
+	unit.position.y = lerpf(unit.position.y, new_elev, minf(1.0, delta * 10.0))
+
+func _get_terrain_mods(world_pos: Vector3) -> Dictionary:
+	if current_room_info != null and is_instance_valid(current_room_info):
+		return current_room_info.get_terrain_modifiers_at(world_pos)
+	return {
+		"terrain_type": "NORMAL",
+		"speed_multiplier": 1.0,
+		"range_bonus_multiplier": 1.0,
+		"damage_taken_multiplier": 1.0,
+		"elevation_offset": 0.0,
+	}
 
 func _tick_active_aoes(delta: float) -> void:
 	var remaining: Array[TelegraphedAoEScript] = []
@@ -762,9 +830,14 @@ func _begin_special_skill_targeting(skill_index: int) -> void:
 		_update_status_banner("Targeting EX Skill: %s (Left-Click ground)" % sk.name)
 
 func _on_ex_target_confirmed(skill: SkillData, world_pos: Vector3) -> void:
+	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
 	if skill == null or ex_skill_system == null:
 		return
 	ex_skill_system.activate_skill(skill, world_pos)
+
+func _on_ex_target_cancelled() -> void:
+	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
+	_update_status_banner("EX Skill Cancelled")
 
 func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 	if skill == null:
@@ -805,7 +878,111 @@ func _finalize_box_selection(end_pos: Vector2) -> void:
 
 	for s in squad_units:
 		if s != null and is_instance_valid(s):
-			proxy_factory.set_unit_selected(s, selection_manager.selected_units.has(s))
+			proxy_factory.set_unit_selected(s, selection_manager.selected_units.has(s), true)
+
+func _on_selection_changed(units: Array[Node3D]) -> void:
+	var selected_ids: Array[String] = []
+	var single_summary: String = ""
+	for s in squad_units:
+		if s != null and is_instance_valid(s):
+			var is_sel: bool = units.has(s)
+			proxy_factory.set_unit_selected(s, is_sel, true)
+			if is_sel and s.unit_data != null:
+				selected_ids.append(s.unit_data.id)
+
+	if units.size() == 1 and units[0] is CombatUnitScript:
+		var u := units[0] as CombatUnitScript
+		var terrain_name: String = str(_get_terrain_mods(u.position).get("terrain_type", "NORMAL"))
+		var order_str: String = u.current_order_type if u.has_player_order else "AUTO"
+		single_summary = "Đang chọn: %s | Trạng thái: %s | Địa hình: %s" % [u.name, order_str, terrain_name]
+	elif units.size() >= 2:
+		single_summary = "Đang chọn nhóm (%d): %s" % [selected_ids.size(), ", ".join(selected_ids)]
+
+	if combat_hud != null:
+		combat_hud.update_selected_units(selected_ids, single_summary)
+	_update_tactical_2d_overlay()
+
+func _on_order_issued(order_type: String, units: Array[Node3D]) -> void:
+	var last_target_pos: Vector3 = Vector3.ZERO
+	var has_beacon_pos: bool = false
+	for u in units:
+		if u is CombatUnitScript:
+			var cu := u as CombatUnitScript
+			proxy_factory.update_unit_order_visual(cu, order_type)
+			if combat_hud != null and cu.unit_data != null:
+				combat_hud.update_striker_order(cu.unit_data.id, order_type)
+			if order_type == "MOVE" or order_type == "COVER":
+				last_target_pos = cu.order_target_position
+				has_beacon_pos = true
+
+	if has_beacon_pos:
+		var b_color: Color = Color(0.2, 0.95, 0.55, 0.45) if order_type == "COVER" else Color(0.2, 0.9, 1.0, 0.45)
+		proxy_factory.update_order_beacon(order_beacon, last_target_pos, b_color, true)
+	else:
+		proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
+
+	_refresh_target_reticles()
+	_update_status_banner("Order Issued: %s (%d units)" % [order_type, units.size()])
+	_update_tactical_2d_overlay()
+
+func _on_striker_order_completed(u: CombatUnitScript) -> void:
+	if u != null and is_instance_valid(u):
+		proxy_factory.update_unit_order_visual(u, "")
+		if combat_hud != null and u.unit_data != null:
+			combat_hud.update_striker_order(u.unit_data.id, "")
+	_refresh_target_reticles()
+	_update_tactical_2d_overlay()
+
+func _refresh_target_reticles() -> void:
+	var focused_enemies: Array = []
+	for s in squad_units:
+		if s != null and is_instance_valid(s) and s.is_alive and s.has_player_order and s.current_order_type == "FOCUS_FIRE":
+			if s.order_target_node != null and is_instance_valid(s.order_target_node):
+				focused_enemies.append(s.order_target_node)
+
+	for e in enemy_units:
+		if e != null and is_instance_valid(e):
+			proxy_factory.set_unit_targeted(e, e.is_alive and focused_enemies.has(e))
+
+func _update_tactical_2d_overlay() -> void:
+	if selection_box_overlay == null:
+		return
+	var iso_cam := _get_isometric_camera()
+	if iso_cam == null or not iso_cam.is_inside_tree():
+		return
+
+	var screen_pts: Array[Vector2] = []
+	var order_lines: Array[Dictionary] = []
+
+	if selection_manager != null:
+		for u in selection_manager.selected_units:
+			if u == null or not is_instance_valid(u):
+				continue
+			if u is CombatUnitScript and not (u as CombatUnitScript).is_alive:
+				continue
+			var wpos: Vector3 = u.global_position if u.is_inside_tree() else u.position
+			if not iso_cam.is_position_behind(wpos):
+				var from_pt: Vector2 = iso_cam.unproject_position(wpos)
+				screen_pts.append(from_pt)
+				if u is CombatUnitScript:
+					var cu := u as CombatUnitScript
+					if cu.has_player_order:
+						var target_w: Variant = null
+						var line_col := Color(0.2, 0.88, 1.0, 0.85)
+						if cu.current_order_type == "FOCUS_FIRE" and cu.order_target_node != null and is_instance_valid(cu.order_target_node):
+							target_w = (cu.order_target_node as Node3D).global_position
+							line_col = Color(1.0, 0.25, 0.25, 0.9)
+						elif cu.current_order_type == "MOVE" or cu.current_order_type == "COVER":
+							target_w = cu.order_target_position
+							line_col = Color(0.25, 0.95, 0.55, 0.85) if cu.current_order_type == "COVER" else Color(0.2, 0.88, 1.0, 0.85)
+						if target_w is Vector3 and not iso_cam.is_position_behind(target_w as Vector3):
+							order_lines.append({
+								"from": from_pt,
+								"to": iso_cam.unproject_position(target_w as Vector3),
+								"color": line_col,
+							})
+
+	selection_box_overlay.update_tactical_markers(screen_pts, order_lines)
 
 func _handle_right_click_order(screen_pos: Vector2) -> void:
 	var iso_cam := _get_isometric_camera()
@@ -926,8 +1103,16 @@ func _connect_signals() -> void:
 			room_manager.dungeon_completed.connect(_on_dungeon_completed)
 	if wave_spawner != null and not wave_spawner.wave_cleared.is_connected(_on_wave_cleared):
 		wave_spawner.wave_cleared.connect(_on_wave_cleared)
-	if targeting_overlay != null and not targeting_overlay.target_confirmed.is_connected(_on_ex_target_confirmed):
-		targeting_overlay.target_confirmed.connect(_on_ex_target_confirmed)
+	if targeting_overlay != null:
+		if not targeting_overlay.target_confirmed.is_connected(_on_ex_target_confirmed):
+			targeting_overlay.target_confirmed.connect(_on_ex_target_confirmed)
+		if not targeting_overlay.target_cancelled.is_connected(_on_ex_target_cancelled):
+			targeting_overlay.target_cancelled.connect(_on_ex_target_cancelled)
+	if selection_manager != null:
+		if not selection_manager.selection_changed.is_connected(_on_selection_changed):
+			selection_manager.selection_changed.connect(_on_selection_changed)
+		if not selection_manager.order_issued.is_connected(_on_order_issued):
+			selection_manager.order_issued.connect(_on_order_issued)
 	if ex_skill_system != null and not ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.connect(_on_ex_skill_activated)
 
@@ -956,8 +1141,16 @@ func _disconnect_signals() -> void:
 			room_manager.dungeon_completed.disconnect(_on_dungeon_completed)
 	if wave_spawner != null and is_instance_valid(wave_spawner) and wave_spawner.wave_cleared.is_connected(_on_wave_cleared):
 		wave_spawner.wave_cleared.disconnect(_on_wave_cleared)
-	if targeting_overlay != null and is_instance_valid(targeting_overlay) and targeting_overlay.target_confirmed.is_connected(_on_ex_target_confirmed):
-		targeting_overlay.target_confirmed.disconnect(_on_ex_target_confirmed)
+	if targeting_overlay != null and is_instance_valid(targeting_overlay):
+		if targeting_overlay.target_confirmed.is_connected(_on_ex_target_confirmed):
+			targeting_overlay.target_confirmed.disconnect(_on_ex_target_confirmed)
+		if targeting_overlay.target_cancelled.is_connected(_on_ex_target_cancelled):
+			targeting_overlay.target_cancelled.disconnect(_on_ex_target_cancelled)
+	if selection_manager != null and is_instance_valid(selection_manager):
+		if selection_manager.selection_changed.is_connected(_on_selection_changed):
+			selection_manager.selection_changed.disconnect(_on_selection_changed)
+		if selection_manager.order_issued.is_connected(_on_order_issued):
+			selection_manager.order_issued.disconnect(_on_order_issued)
 	if ex_skill_system != null and is_instance_valid(ex_skill_system) and ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.disconnect(_on_ex_skill_activated)
 

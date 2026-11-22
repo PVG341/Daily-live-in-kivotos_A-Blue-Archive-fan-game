@@ -68,6 +68,15 @@ func _run_tests() -> void:
 		check(room.get_player_spawn_positions().size() >= 4, "%s must contain at least 4 PlayerSpawns" % rpath)
 		check(room.get_cover_points().size() >= int(spec["min_covers"]), "%s must contain at least %d CoverPoint3Ds" % [rpath, int(spec["min_covers"])])
 		check(room.get_enemy_spawn_positions().size() >= int(spec["min_enemies"]), "%s must contain at least %d EnemySpawns" % [rpath, int(spec["min_enemies"])])
+		if str(spec["type"]) == "COMBAT":
+			check(room.arena_size.x >= 60.0 and room.arena_size.y >= 52.0, "room_combat.tscn arena_size must be expanded (>= 60x52)")
+			check(room.get_terrain_zones().size() >= 5, "room_combat.tscn must contain at least 5 TacticalTerrainZones")
+			var trench_mods: Dictionary = room.get_terrain_modifiers_at(Vector3(-12.0, 0.0, 3.0))
+			check(float(trench_mods.get("speed_multiplier", 1.0)) < 1.0, "Water trench zone must reduce speed_multiplier")
+			var high_mods: Dictionary = room.get_terrain_modifiers_at(Vector3(-18.0, 0.0, 14.0))
+			check(float(high_mods.get("range_bonus_multiplier", 1.0)) > 1.0, "High ground zone must grant range_bonus_multiplier > 1.0")
+			var bunker_mods: Dictionary = room.get_terrain_modifiers_at(Vector3(0.0, 0.0, -1.0))
+			check(float(bunker_mods.get("damage_taken_multiplier", 1.0)) < 1.0, "Bunker interior zone must grant damage_taken_multiplier < 1.0")
 		if bool(spec["boss"]):
 			check(room.get_node_or_null("BossSpawn") is Marker3D, "room_boss.tscn must contain BossSpawn Marker3D")
 		room.free()
@@ -91,6 +100,40 @@ func _run_tests() -> void:
 	var cost_before: float = arena.ex_skill_system.cost_bar.current_cost
 	arena.step_combat(0.5)
 	check(arena.ex_skill_system.cost_bar.current_cost > cost_before, "step_combat(0.5) must accumulate EX cost bar")
+
+	# 3b. Tactical UI, Multi-Unit Selection, Order Pillars, Target Reticle, and EX-Skill Preview
+	var striker0 = arena.squad_units[0]
+	var striker1 = arena.squad_units[1]
+	var focus_enemy = arena.enemy_units[0]
+	arena.selection_manager.select_unit(striker0, false)
+	arena.selection_manager.select_unit(striker1, true)
+	check(arena.combat_hud.selected_striker_ids.size() == 2, "Selecting 2 Strikers must update CombatHUD.selected_striker_ids to 2")
+	var ring0 := striker0.get_node_or_null("VisualRoot/SelectionRing") as Node3D
+	var atk_ring0 := striker0.get_node_or_null("VisualRoot/AttackRangeRing") as Node3D
+	check(ring0 != null and ring0.visible == true, "Selected Striker VisualRoot/SelectionRing must be visible")
+	check(atk_ring0 != null and atk_ring0.visible == true, "Selected Striker VisualRoot/AttackRangeRing must be visible")
+
+	arena.selection_manager.issue_hold_position()
+	var pillar0 := striker0.get_node_or_null("VisualRoot/OrderStatusPillar") as Node3D
+	var order_lbl0 := striker0.get_node_or_null("VisualRoot/OrderStatusPillar/OrderIconLabel") as Label3D
+	check(pillar0 != null and pillar0.visible == true, "HOLD_POSITION must reveal VisualRoot/OrderStatusPillar")
+	check(order_lbl0 != null and order_lbl0.text.contains("HOLD POS"), "HOLD_POSITION pillar label must show HOLD POS")
+
+	arena.selection_manager.issue_hold_fire()
+	check(order_lbl0 != null and order_lbl0.text.contains("HOLD FIRE"), "HOLD_FIRE pillar label must show HOLD FIRE")
+
+	arena.selection_manager.issue_focus_fire(focus_enemy)
+	var enemy_reticle := focus_enemy.get_node_or_null("VisualRoot/TargetReticle") as Node3D
+	check(enemy_reticle != null and enemy_reticle.visible == true, "FOCUS_FIRE must reveal enemy VisualRoot/TargetReticle")
+
+	var preview_skill: SkillData = arena.ex_skill_system.registered_skills[0]
+	arena.targeting_overlay.begin_targeting(preview_skill)
+	var prev_pos: Vector3 = arena.targeting_overlay.update_preview(Vector2(640.0, 360.0), null, 0.0)
+	check(arena.targeting_overlay.is_targeting == true and prev_pos == arena.targeting_overlay.preview_world_position, "SkillTargetingOverlay.update_preview must update preview_world_position")
+	arena.targeting_overlay.cancel_targeting()
+	check(arena.targeting_overlay.is_targeting == false and arena.targeting_overlay.visible == false, "cancel_targeting must reset overlay visibility")
+	if arena.skill_preview_disc != null:
+		check(arena.skill_preview_disc.visible == false, "cancel_targeting must hide 3D skill_preview_disc")
 
 	# 4. Cast an EX-Skill and verify cost deduction + AoE damage
 	arena.ex_skill_system.cost_bar.current_cost = 6.0

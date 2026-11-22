@@ -1,8 +1,8 @@
 # PROGRESS.md — Blue Archive 3D Fan Game (Godot 4.7)
 
-* **Ngày cập nhật:** 2026-11-21
+* **Ngày cập nhật:** 2026-11-23
 * **Nhánh Git hiện tại:** `main`
-* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm Final Review Fix Wave, Memory/RAM Leak Audit, Phase 5 Mốc 1 Tòa nhà Schale, và Phase 5 Mốc 2 Đấu trường Roguelike RTS), toàn bộ **25/25 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
+* **Trạng thái:** Hoàn thành **21 / 21 Tasks** (kèm Final Review Fix Wave, Memory/RAM Leak Audit, Phase 5 Mốc 1 Tòa nhà Schale, Phase 5 Mốc 2 Đấu trường Roguelike RTS, và Nâng cấp Tactical UI & Địa hình Chiến trường), toàn bộ **25/25 bộ test headless** đều **PASS** với **0 orphan nodes / 0 ObjectDB leaks**.
 * **Engine & Cấu hình:** Godot `4.7.2-stable` (Forward+ / D3D12, Jolt Physics 3D, GDScript, addon `godot_ai` MCP và `GDQuest_GDScript_formatter`)
 * **Tài liệu nguồn:**
   * Design Spec: [docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md](docs/superpowers/specs/2026-11-19-blue-archive-fan-game-design.md)
@@ -42,11 +42,11 @@ D:\This PC\Project\test
 │   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, HubSceneController, DoorPortal, InteractiveDoor, InteractiveElevator, ElevatorCallButton, FloorVisibilityZone, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
 │   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
 │   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
-│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
+│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
 │   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI
 │   └── ui/            # HUDManager, PhoneOSManager, PauseMenuManager, ModManagerUI, CombatHUD
 ├── shaders/           # cel_toon_shader.gdshader, outline_shader.gdshader
-└── tests/             # 21 bộ test headless (tests/test_*.gd)
+└── tests/             # 25 bộ test headless (tests/test_*.gd)
 ```
 
 ---
@@ -151,5 +151,15 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **`CoverPoint3D.gd`, `CombatUnit.gd` & `UnitSelectionManager.gd`:** `CoverPoint3D` tự dọn occupant đã chết hoặc đã bị giải phóng (`_sanitize_occupant()`); `CombatUnit.die()` xóa `order_target_node` & `current_order_type`; `UnitSelectionManager` cung cấp `prune_invalid_units()`.
 * **`SaveManager.gd` & `ModLoader.gd`:** `SaveManager` ngắt kết nối `EventBus` cũ khi đổi bus (`set_event_bus`) và khi rời tree (`_exit_tree`); `ModLoader` theo dõi `_mounted_pcks` để tránh nạp trùng gói `.pck` vào RAM khi quét lại mod.
 * **Stress Test Tự động:** `tests/test_memory_leaks.gd` kiểm chứng trực tiếp `Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT) == 0` sau hàng loạt chu kỳ cấp phát/giải phóng.
+
+---
+
+## 7. Nâng cấp Tactical UI & Bản đồ Chiến trường Phức tạp (Phase 5)
+
+* **Phản hồi Chọn Đơn vị & Nhóm (RTS Selection Feedback):** `CombatHUD` (`SelectedUnitsLabel`, viền sáng chân dung `"★ [...]"`), `SelectionBoxOverlay` (khung chọn nhóm 2D, ngoặc chọn cá thể, đường chỉ dẫn lệnh), và vòng `SelectionRing` + `AttackRangeRing` 3D quanh đơn vị được chọn.
+* **Cột sáng Lệnh RTS & Target Reticle:** `ChibiProxyFactory` bổ sung `OrderStatusPillar` (cột sáng + nhãn trạng thái `"🛡️ HOLD POS"`, `"🚫 HOLD FIRE"`, `"🎯 FOCUS FIRE"`, `"🧱 TAKE COVER"`, `"➔ MOVING"`) và `TargetReticle` (`"▼ TARGET ▼"`) trên mục tiêu bị focus fire; `CombatArenaController` phát `order_beacon` tại vị trí ra lệnh.
+* **Xem trước Phạm vi EX-Skill (Live AoE Range Preview):** `SkillTargetingOverlay` & `CombatArenaController` cập nhật `skill_preview_disc` (3D) + vòng tròn AoE 2D theo vị trí con trỏ chuột khi nhắm kỹ năng.
+* **Địa hình Chiến trường Mở rộng (`TacticalTerrainZone.gd`):** Mở rộng kích thước `room_combat.tscn` (`64×56`), `room_elite.tscn` (`68×60`), `room_boss.tscn` (`72×64`) với nhà đô thị, bunker bê tông (`BUNKER_INTERIOR`), cầu vượt (`UNDER_BRIDGE`), mương nước làm chậm (`WATER_TRENCH`), hố pháo (`CRATER_PIT`), và điểm cao chiến thuật tăng tầm đánh (`HIGH_GROUND`).
+
 
 
