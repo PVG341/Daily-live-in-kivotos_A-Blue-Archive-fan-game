@@ -39,7 +39,7 @@ func update_selected_units(selected_ids: Array[String], summary_text: String = "
 	if not summary_text.strip_edges().is_empty():
 		displayed_selection_summary = summary_text
 	elif selected_striker_ids.is_empty():
-		displayed_selection_summary = "Chưa chọn học sinh (Kéo chuột trái chọn nhóm)"
+		displayed_selection_summary = "Chỉ huy [Z/X/V]: Đổi Đội Hình | Kéo Chuột Trái: Khoanh Vùng | Chuột Phải: Mục Tiêu/Hướng | TAB: Slow-Mo"
 	else:
 		displayed_selection_summary = "Đang chọn (%d): %s" % [selected_striker_ids.size(), ", ".join(selected_striker_ids)]
 
@@ -47,6 +47,12 @@ func update_selected_units(selected_ids: Array[String], summary_text: String = "
 	if sel_lbl != null:
 		sel_lbl.text = displayed_selection_summary
 	_refresh_striker_portraits()
+
+func update_commander_status(summary_text: String) -> void:
+	displayed_selection_summary = summary_text
+	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
+	if sel_lbl != null:
+		sel_lbl.text = summary_text
 
 func update_striker_order(student_id: String, order_type: String) -> void:
 	if order_type.is_empty():
@@ -67,7 +73,7 @@ func clear_hud() -> void:
 	displayed_selection_summary = ""
 	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
 	if sel_lbl != null:
-		sel_lbl.text = "Chưa chọn học sinh (Kéo chuột trái chọn nhóm)"
+		sel_lbl.text = "Chỉ huy [Z/X/V]: Đổi Đội Hình | Kéo Chuột Trái: Khoanh Vùng | Chuột Phải: Mục Tiêu/Hướng | TAB: Slow-Mo"
 	_refresh_striker_portraits()
 	_refresh_buff_row()
 

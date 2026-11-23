@@ -257,6 +257,7 @@ func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
 
 	var beam_color := Color(0.2, 0.85, 1.0, 0.30)
 	var icon_text := order_type
+	var show_beam: bool = true
 	match order_type:
 		"HOLD_POSITION":
 			beam_color = Color(1.0, 0.78, 0.15, 0.42)
@@ -273,12 +274,30 @@ func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
 		"MOVE":
 			beam_color = Color(0.20, 0.85, 1.0, 0.30)
 			icon_text = "➔ MOVING"
+		"⚠️ NÉ AoE":
+			beam_color = Color(1.0, 0.35, 0.12, 0.42)
+		"🛡️ RÚT LUI":
+			beam_color = Color(1.0, 0.78, 0.18, 0.36)
+		"🩹 CỨU THƯƠNG":
+			beam_color = Color(0.25, 0.95, 0.55, 0.32)
+		"🚩 TIẾN VÀO VÙNG":
+			beam_color = Color(0.2, 0.88, 1.0, 0.30)
+		"🎯 MỤC TIÊU CHỈ ĐỊNH":
+			beam_color = Color(1.0, 0.25, 0.28, 0.32)
+		"🧱 NẤP & BẮN":
+			beam_color = Color(0.22, 0.9, 0.62, 0.24)
+		"⚔️ TỰ ĐỘNG ĐÁNH":
+			beam_color = Color(0.75, 0.85, 1.0, 0.18)
+			icon_text = "⚔️ AUTO"
+			show_beam = false
 
 	var beam := pillar.get_node_or_null("LightBeam") as MeshInstance3D
-	if beam != null and beam.mesh is CylinderMesh:
-		var cm := beam.mesh as CylinderMesh
-		if cm.material is StandardMaterial3D:
-			(cm.material as StandardMaterial3D).albedo_color = beam_color
+	if beam != null:
+		beam.visible = show_beam
+		if beam.mesh is CylinderMesh:
+			var cm := beam.mesh as CylinderMesh
+			if cm.material is StandardMaterial3D:
+				(cm.material as StandardMaterial3D).albedo_color = beam_color
 
 	var lbl := pillar.get_node_or_null("OrderIconLabel") as Label3D
 	if lbl != null:
@@ -312,6 +331,68 @@ func update_unit_hp_label(unit: Node3D, display_name: String, current_hp: int, m
 				mat.albedo_color = Color(0.95, 0.22, 0.22) if hp_ratio > 0.3 else Color(1.0, 0.55, 0.12)
 			else:
 				mat.albedo_color = Color(0.2, 0.92, 0.45) if hp_ratio > 0.35 else Color(1.0, 0.8, 0.15)
+
+## Creates a 3D ground disc + outer ring showing Sensei's tactical command zone.
+func create_tactical_zone_disc() -> Node3D:
+	var root := Node3D.new()
+	root.name = "TacticalZoneDisc"
+	root.visible = false
+
+	var disc := MeshInstance3D.new()
+	disc.name = "ZoneFillMesh"
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 1.0
+	mesh.bottom_radius = 1.0
+	mesh.height = 0.05
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.20, 0.88, 1.0, 0.20)
+	mesh.material = mat
+	disc.mesh = mesh
+	disc.position = Vector3(0.0, 0.03, 0.0)
+	root.add_child(disc)
+
+	var ring := MeshInstance3D.new()
+	ring.name = "ZoneRingMesh"
+	var r_mesh := TorusMesh.new()
+	r_mesh.inner_radius = 0.96
+	r_mesh.outer_radius = 1.0
+	var r_mat := StandardMaterial3D.new()
+	r_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	r_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	r_mat.albedo_color = Color(0.25, 0.92, 1.0, 0.78)
+	r_mesh.material = r_mat
+	ring.mesh = r_mesh
+	ring.position = Vector3(0.0, 0.05, 0.0)
+	root.add_child(ring)
+	return root
+
+## Positions, scales, and colors the 3D Commander tactical command zone based on active stance.
+func update_tactical_zone_disc(disc: Node3D, center: Vector3, radius: float, stance: int, visible_state: bool) -> void:
+	if disc == null or not is_instance_valid(disc):
+		return
+	disc.visible = visible_state
+	if not visible_state:
+		return
+	var r: float = maxf(1.0, radius)
+	disc.position = Vector3(center.x, center.y, center.z)
+	disc.scale = Vector3(r, 1.0, r)
+	var base_col := Color(0.20, 0.88, 1.0)
+	if stance == 0:
+		base_col = Color(1.0, 0.42, 0.18)
+	elif stance == 2:
+		base_col = Color(0.22, 0.92, 0.52)
+	var fill_mesh := disc.get_node_or_null("ZoneFillMesh") as MeshInstance3D
+	if fill_mesh != null and fill_mesh.mesh is CylinderMesh:
+		var cm := fill_mesh.mesh as CylinderMesh
+		if cm.material is StandardMaterial3D:
+			(cm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.18)
+	var ring_mesh := disc.get_node_or_null("ZoneRingMesh") as MeshInstance3D
+	if ring_mesh != null and ring_mesh.mesh is TorusMesh:
+		var tm := ring_mesh.mesh as TorusMesh
+		if tm.material is StandardMaterial3D:
+			(tm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.78)
 
 ## Creates a 3D ground ring displaying maximum cast_range while targeting an EX-Skill.
 func create_skill_range_ring() -> Node3D:

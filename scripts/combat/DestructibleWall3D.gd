@@ -173,6 +173,34 @@ func intersects_point_xz(world_pos: Vector3, padding: float = 0.35) -> bool:
 	var half_y: float = wall_size.y * 0.5 + 1.0
 	return absf(local_pt.x) <= half_x and absf(local_pt.z) <= half_z and absf(local_pt.y) <= half_y
 
+## Returns a world-space XZ push-out vector if world_pos overlaps this unbroken wall plus padding.
+func get_push_out_offset(world_pos: Vector3, padding: float = 0.42) -> Vector3:
+	if not intersects_point_xz(world_pos, padding):
+		return Vector3.ZERO
+	var xform: Transform3D = _get_effective_transform()
+	var local_pt: Vector3 = xform.affine_inverse() * world_pos
+	var half_x: float = wall_size.x * 0.5 + padding
+	var half_z: float = wall_size.z * 0.5 + padding
+	var pen_x: float = half_x - absf(local_pt.x)
+	var pen_z: float = half_z - absf(local_pt.z)
+	var local_push := Vector3.ZERO
+	if pen_x < pen_z:
+		local_push.x = (pen_x + 0.04) * (1.0 if local_pt.x >= 0.0 else -1.0)
+	else:
+		local_push.z = (pen_z + 0.04) * (1.0 if local_pt.z >= 0.0 else -1.0)
+	var world_push: Vector3 = xform.basis * local_push
+	world_push.y = 0.0
+	return world_push
+
+## Returns the two lateral corner waypoints outside the ends of this wall segment for clean flanking.
+func get_flank_corners(padding: float = 1.2) -> Array[Vector3]:
+	var xform: Transform3D = _get_effective_transform()
+	if wall_size.x >= wall_size.z:
+		var reach: float = wall_size.x * 0.5 + padding
+		return [xform * Vector3(-reach, 0.0, 0.0), xform * Vector3(reach, 0.0, 0.0)]
+	var reach_z: float = wall_size.z * 0.5 + padding
+	return [xform * Vector3(0.0, 0.0, -reach_z), xform * Vector3(0.0, 0.0, reach_z)]
+
 ## Applies structural damage scaled by penetration_power vs armor_tier; destroys wall at 0 HP.
 func take_structural_damage(amount: int, penetration_power: int = 0) -> int:
 	if is_destroyed or not is_destructible or amount <= 0:

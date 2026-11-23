@@ -27,6 +27,8 @@ const SkillTargetingOverlayScript := preload("res://scripts/combat/SkillTargetin
 const SelectionBoxOverlayScript := preload("res://scripts/combat/SelectionBoxOverlay.gd")
 const CombatRoomDataScript := preload("res://scripts/combat/CombatRoomData.gd")
 const CombatHealthBarOverlayScript := preload("res://scripts/combat/CombatHealthBarOverlay.gd")
+const CommanderDirectiveSystemScript := preload("res://scripts/combat/CommanderDirectiveSystem.gd")
+const UtilityAIManagerScript := preload("res://scripts/combat/ai/UtilityAIManager.gd")
 
 const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
@@ -43,6 +45,8 @@ var projectile_manager: ProjectileManagerScript
 var wave_spawner: WaveSpawnerScript
 var event_manager: CombatEventManagerScript
 var ex_skill_system: EXSkillSystemScript
+var commander_system: CommanderDirectiveSystemScript
+var utility_ai: UtilityAIManagerScript
 
 var tanker_ai: TankerAIScript
 var dps_ai: DamageDealerAIScript
@@ -74,6 +78,7 @@ var current_draft_cards: Array[Dictionary] = []
 var current_room_info: CombatRoomDataScript = null
 var skill_preview_disc: Node3D = null
 var skill_range_ring: Node3D = null
+var tactical_zone_disc: Node3D = null
 var order_beacon: Node3D = null
 
 var run_finished: bool = false
@@ -81,6 +86,7 @@ var room_elapsed_time: float = 0.0
 var _boss_aoe_timer: float = 2.5
 var _event_check_timer: float = 0.0
 var _unit_cooldowns: Dictionary = {}
+var _unit_flank_memory: Dictionary = {}
 var _is_dragging_box: bool = false
 var _drag_start_pos: Vector2 = Vector2.ZERO
 var _initialized: bool = false
@@ -89,6 +95,7 @@ func _init() -> void:
 	layout_generator = DungeonLayoutGeneratorScript.new()
 	card_manager = RoguelikeCardManagerScript.new()
 	proxy_factory = ChibiProxyFactoryScript.new()
+	utility_ai = UtilityAIManagerScript.new()
 
 func _ready() -> void:
 	_setup_child_managers()
@@ -103,6 +110,8 @@ func _ready() -> void:
 		effects_container.add_child(skill_preview_disc)
 		skill_range_ring = proxy_factory.create_skill_range_ring()
 		effects_container.add_child(skill_range_ring)
+		tactical_zone_disc = proxy_factory.create_tactical_zone_disc()
+		effects_container.add_child(tactical_zone_disc)
 		order_beacon = proxy_factory.create_order_beacon()
 		effects_container.add_child(order_beacon)
 	_connect_signals()
@@ -115,11 +124,13 @@ func _exit_tree() -> void:
 	if projectile_manager != null:
 		projectile_manager.clear_projectiles()
 	_clear_active_aoes()
+	_unit_flank_memory.clear()
 	if selection_manager != null:
 		selection_manager.selected_units.clear()
 
 func _physics_process(delta: float) -> void:
-	step_combat(delta)
+	var scale_mult: float = commander_system.get_effective_time_scale() if commander_system != null else 1.0
+	step_combat(delta * scale_mult)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if run_finished or room_manager == null or room_manager.is_draft_open:
@@ -136,12 +147,21 @@ func _unhandled_input(event: InputEvent) -> void:
 				_begin_special_skill_targeting(2)
 			KEY_4:
 				_begin_special_skill_targeting(3)
-			KEY_H:
-				if selection_manager != null:
-					selection_manager.issue_hold_position()
+			KEY_Z:
+				if commander_system != null:
+					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.ALL_OUT_ASSAULT)
+			KEY_X:
+				if commander_system != null:
+					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.BALANCED_TACTICAL)
+			KEY_V, KEY_H:
+				if commander_system != null:
+					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.DEFENSIVE_HOLD)
+			KEY_TAB:
+				if commander_system != null:
+					commander_system.toggle_tactical_slow_mo()
 			KEY_G:
-				if selection_manager != null:
-					selection_manager.issue_hold_fire()
+				if commander_system != null:
+					commander_system.clear_directives()
 			KEY_C, KEY_HOME:
 				_recenter_camera_on_squad()
 			KEY_ESCAPE:
@@ -169,15 +189,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				_is_dragging_box = true
 				_drag_start_pos = mb.position
 				if selection_box_overlay != null:
-					selection_box_overlay.set_drag_rect(true, Rect2(mb.position, Vector2.ZERO))
+					selection_box_overlay.update_commander_markers(mb.position, 24.0, {})
 			else:
 				if _is_dragging_box:
 					_is_dragging_box = false
-					if selection_box_overlay != null:
-						selection_box_overlay.set_drag_rect(false, Rect2())
-					_finalize_box_selection(mb.position)
+					_finalize_commander_zone_drag(mb.position)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
-			_handle_right_click_order(mb.position)
+			_handle_commander_right_click(mb.position)
 
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -197,9 +215,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true, valid_preview)
 			proxy_factory.update_skill_range_ring(skill_range_ring, caster_origin, sk_range, sk_range > 0.0)
 		elif _is_dragging_box:
-			if selection_box_overlay != null and selection_manager != null:
-				var rect: Rect2 = selection_manager.selection_math.normalize_selection_rect(_drag_start_pos, mm.position)
-				selection_box_overlay.set_drag_rect(true, rect)
+			if selection_box_overlay != null:
+				selection_box_overlay.update_commander_markers(_drag_start_pos, maxf(24.0, _drag_start_pos.distance_to(mm.position)), {})
 
 ## Starts or restarts a 4-room Roguelike dungeon run.
 func start_run(difficulty: int = 1) -> void:
@@ -363,6 +380,7 @@ func _setup_child_managers() -> void:
 	wave_spawner = _ensure_child(WaveSpawnerScript, "WaveSpawner") as WaveSpawnerScript
 	event_manager = _ensure_child(CombatEventManagerScript, "CombatEventManager") as CombatEventManagerScript
 	ex_skill_system = _ensure_child(EXSkillSystemScript, "EXSkillSystem") as EXSkillSystemScript
+	commander_system = _ensure_child(CommanderDirectiveSystemScript, "CommanderDirectiveSystem") as CommanderDirectiveSystemScript
 	tanker_ai = _ensure_child(TankerAIScript, "TankerAI") as TankerAIScript
 	dps_ai = _ensure_child(DamageDealerAIScript, "DamageDealerAI") as DamageDealerAIScript
 	healer_ai = _ensure_child(HealerAIScript, "HealerAI") as HealerAIScript
@@ -557,6 +575,9 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		projectile_manager.clear_projectiles()
 	if selection_manager != null:
 		selection_manager.deselect_all()
+	if commander_system != null:
+		commander_system.clear_directives()
+	_unit_flank_memory.clear()
 	if health_bar_overlay != null:
 		health_bar_overlay.clear_all()
 
@@ -608,9 +629,13 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
 	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
+	proxy_factory.update_tactical_zone_disc(tactical_zone_disc, Vector3.ZERO, 6.5, 1, false)
 	proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
 	if selection_box_overlay != null:
 		selection_box_overlay.update_tactical_markers([], [])
+		selection_box_overlay.update_commander_markers(Vector2.ZERO, 0.0, {})
+	if combat_hud != null and commander_system != null:
+		combat_hud.update_commander_status(commander_system.get_directive_summary())
 
 	if room_info != null:
 		cover_points = room_info.get_cover_points()
@@ -688,6 +713,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 func _on_enemy_died(unit: CombatUnitScript) -> void:
 	if unit != null and is_instance_valid(unit):
 		unit.visible = false
+		if commander_system != null and commander_system.priority_target == unit:
+			commander_system.set_priority_target(null)
 	for buff in card_manager.get_active_buffs():
 		if str(buff.get("type", "")) == "HEAL_ON_KILL":
 			var ratio: float = float(buff.get("value", 0.05))
@@ -752,60 +779,89 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	if striker.has_player_order:
 		if not striker.check_emergency_override():
 			_execute_player_order(striker, delta, cd, eff_range)
+			_apply_unit_separation(striker, delta)
 			return
 
-	var role: StudentData.CombatRole = striker.unit_data.role if striker.unit_data != null else StudentData.CombatRole.DAMAGE_DEALER
 	var decision: Dictionary
-	match role:
-		StudentData.CombatRole.TANKER:
-			decision = tanker_ai.evaluate_action(striker, allies, enemies, cover_points)
-		StudentData.CombatRole.HEALER:
-			decision = healer_ai.evaluate_action(striker, allies, enemies, cover_points)
-		StudentData.CombatRole.BUFFER:
-			decision = buffer_ai.evaluate_action(striker, allies, enemies, cover_points)
-		_:
-			decision = dps_ai.evaluate_action(striker, allies, enemies, cover_points)
+	if utility_ai != null:
+		decision = utility_ai.evaluate_unit_utility(
+			striker,
+			allies,
+			enemies,
+			cover_points,
+			active_aoes,
+			commander_system,
+			current_room_info,
+			_get_student_bond_level(striker)
+		)
+	else:
+		decision = dps_ai.evaluate_action(striker, allies, enemies, cover_points)
 
 	var action: String = str(decision.get("action", "IDLE"))
 	var target: Variant = decision.get("target", null)
+	var target_pos: Vector3 = decision.get("target_pos", striker.position)
+	var status_tag: String = str(decision.get("status_tag", ""))
+	if not status_tag.is_empty():
+		proxy_factory.update_unit_order_visual(striker, status_tag)
+		if combat_hud != null and striker.unit_data != null:
+			combat_hud.update_striker_order(striker.unit_data.id, status_tag)
 
-	if action == "HEAL_ALLY" and target is CombatUnitScript:
-		var ally := target as CombatUnitScript
-		var dist: float = striker.position.distance_to(ally.position)
-		if dist > eff_range:
-			_move_unit_toward(striker, ally.position, delta)
-		elif cd <= 0.0 and ally.current_hp < ally.max_hp:
-			ally.heal(striker.atk * 2)
-			_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
-	elif action == "TAKE_COVER_AND_TAUNT" and target is CoverPoint3DScript:
-		var cp := target as CoverPoint3DScript
-		if striker.position.distance_to(cp.position) > 0.6:
-			_move_unit_toward(striker, cp.position, delta)
-		else:
-			cp.claim(striker)
-			if cd <= 0.0 and not enemies.is_empty():
-				var nearest_e := enemies[0] as CombatUnitScript
-				if has_unit_los(striker, nearest_e):
-					var raw_dmg: int = striker.atk
-					var def_mult: float = float(_get_terrain_mods(nearest_e.position).get("damage_taken_multiplier", 1.0))
-					var final_dmg: int = maxi(1, int(round(float(raw_dmg) * def_mult)))
-					projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), nearest_e.position + Vector3(0, 0.7, 0), 22.0, final_dmg, striker, nearest_e, striker.penetration_power, striker.wall_damage)
+	match action:
+		"EVADE_AOE", "SURVIVAL_RETREAT", "ADVANCE_TO_ZONE":
+			_navigate_unit_toward(striker, target_pos, delta)
+		"HEAL_ALLY":
+			if target is CombatUnitScript:
+				var ally := target as CombatUnitScript
+				var dist: float = striker.position.distance_to(ally.position)
+				if dist > eff_range:
+					_navigate_unit_toward(striker, ally.position, delta)
+				elif cd <= 0.0 and ally.current_hp < ally.max_hp:
+					ally.heal(striker.atk * 2)
 					_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
-	elif (action == "ATTACK_TARGET" or action == "TAUNT_ENGAGE") and target is CombatUnitScript:
-		var enemy := target as CombatUnitScript
-		var dist: float = striker.position.distance_to(enemy.position)
-		if dist > eff_range:
-			_move_unit_toward(striker, enemy.position, delta)
-		elif not has_unit_los(striker, enemy):
-			_move_unit_around_walls(striker, enemy.position, delta)
-		elif cd <= 0.0:
-			var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
-			var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
-			dmg = maxi(1, int(round(float(dmg) * def_mult)))
-			projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, enemy, striker.penetration_power, striker.wall_damage)
-			_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
-	elif action == "POSITION_AND_BUFF" and target is Vector3:
-		_move_unit_toward(striker, target as Vector3, delta)
+		"TAKE_COVER_AND_ENGAGE":
+			var cp: Variant = decision.get("cover", null)
+			var dist_cp: float = Vector2(striker.position.x, striker.position.z).distance_to(Vector2(target_pos.x, target_pos.z))
+			if dist_cp > 0.65:
+				_navigate_unit_toward(striker, target_pos, delta)
+			else:
+				if cp is CoverPoint3DScript:
+					(cp as CoverPoint3DScript).claim(striker)
+				if target is CombatUnitScript:
+					var c_enemy := target as CombatUnitScript
+					if striker.position.distance_to(c_enemy.position) <= eff_range and has_unit_los(striker, c_enemy):
+						if cd <= 0.0:
+							_fire_striker_shot(striker, c_enemy, uid)
+					elif commander_system == null or commander_system.current_stance != CommanderDirectiveSystemScript.SquadStance.DEFENSIVE_HOLD:
+						_navigate_unit_toward(striker, c_enemy.position, delta)
+		"FOCUS_PRIORITY_TARGET", "ENGAGE_BEST_ENEMY", "ATTACK_TARGET", "TAUNT_ENGAGE":
+			if target is CombatUnitScript:
+				var enemy := target as CombatUnitScript
+				var dist: float = striker.position.distance_to(enemy.position)
+				if dist > eff_range or not has_unit_los(striker, enemy):
+					_navigate_unit_toward(striker, enemy.position, delta)
+				elif cd <= 0.0:
+					_fire_striker_shot(striker, enemy, uid)
+		"POSITION_AND_BUFF":
+			if target is Vector3:
+				_navigate_unit_toward(striker, target as Vector3, delta)
+
+	_apply_unit_separation(striker, delta)
+
+func _fire_striker_shot(striker: CombatUnitScript, enemy: CombatUnitScript, uid: int) -> void:
+	var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
+	var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
+	dmg = maxi(1, int(round(float(dmg) * def_mult)))
+	projectile_manager.spawn_projectile(
+		striker.position + Vector3(0.0, 0.7, 0.0),
+		enemy.position + Vector3(0.0, 0.7, 0.0),
+		24.0,
+		dmg,
+		striker,
+		enemy,
+		striker.penetration_power,
+		striker.wall_damage
+	)
+	_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 
 func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, eff_range: float) -> void:
 	var uid: int = striker.get_instance_id()
@@ -814,30 +870,24 @@ func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, e
 			if Vector2(striker.position.x, striker.position.z).distance_to(Vector2(striker.order_target_position.x, striker.order_target_position.z)) <= 0.45:
 				striker.clear_player_order()
 			else:
-				_move_unit_toward(striker, striker.order_target_position, delta)
+				_navigate_unit_toward(striker, striker.order_target_position, delta)
 		"COVER":
 			if Vector2(striker.position.x, striker.position.z).distance_to(Vector2(striker.order_target_position.x, striker.order_target_position.z)) <= 0.55:
 				if striker.order_target_node is CoverPoint3DScript:
 					(striker.order_target_node as CoverPoint3DScript).claim(striker)
 				striker.clear_player_order()
 			else:
-				_move_unit_toward(striker, striker.order_target_position, delta)
+				_navigate_unit_toward(striker, striker.order_target_position, delta)
 		"FOCUS_FIRE":
 			var target_enemy := striker.order_target_node as CombatUnitScript
 			if target_enemy == null or not is_instance_valid(target_enemy) or not target_enemy.is_alive:
 				striker.clear_player_order()
 				return
 			var dist: float = striker.position.distance_to(target_enemy.position)
-			if dist > eff_range:
-				_move_unit_toward(striker, target_enemy.position, delta)
-			elif not has_unit_los(striker, target_enemy):
-				_move_unit_around_walls(striker, target_enemy.position, delta)
+			if dist > eff_range or not has_unit_los(striker, target_enemy):
+				_navigate_unit_toward(striker, target_enemy.position, delta)
 			elif cd <= 0.0:
-				var dmg: int = striker.damage_resolver.calculate_damage(striker, target_enemy, card_manager.get_active_buffs())
-				var def_mult: float = float(_get_terrain_mods(target_enemy.position).get("damage_taken_multiplier", 1.0))
-				dmg = maxi(1, int(round(float(dmg) * def_mult)))
-				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), target_enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, target_enemy, striker.penetration_power, striker.wall_damage)
-				_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
+				_fire_striker_shot(striker, target_enemy, uid)
 		"HOLD_POSITION":
 			pass
 		"HOLD_FIRE":
@@ -862,10 +912,8 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 
 	var ally := target as CombatUnitScript
 	var dist: float = enemy.position.distance_to(ally.position)
-	if action == "RUSH" and dist > eff_range:
-		_move_unit_toward(enemy, ally.position, delta)
-	elif dist <= eff_range and not has_unit_los(enemy, ally):
-		_move_unit_around_walls(enemy, ally.position, delta)
+	if (action == "RUSH" and dist > eff_range) or (dist <= eff_range and not has_unit_los(enemy, ally)):
+		_navigate_unit_toward(enemy, ally.position, delta)
 	elif dist <= eff_range and cd <= 0.0:
 		var dmg: int = enemy.damage_resolver.calculate_damage(enemy, ally, [])
 		var ally_mult: float = float(_get_terrain_mods(ally.position).get("damage_taken_multiplier", 1.0))
@@ -884,30 +932,7 @@ func has_unit_los(attacker: CombatUnitScript, target: CombatUnitScript) -> bool:
 	)
 	return bool(res.get("clear", true))
 
-func _move_unit_around_walls(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
-	if current_room_info == null or not is_instance_valid(current_room_info):
-		_move_unit_toward(unit, target_pos, delta)
-		return
-	var los_res: Dictionary = current_room_info.check_line_of_sight(
-		unit.position + Vector3(0.0, 0.7, 0.0),
-		target_pos + Vector3(0.0, 0.7, 0.0),
-		unit.penetration_power
-	)
-	var blocker = los_res.get("blocker", null)
-	if blocker != null and is_instance_valid(blocker):
-		var b_center: Vector3 = blocker.get_world_center()
-		var to_target: Vector3 = Vector3(target_pos.x - b_center.x, 0.0, target_pos.z - b_center.z)
-		var fwd: Vector3 = to_target.normalized() if to_target.length() > 0.01 else Vector3(0.0, 0.0, -1.0)
-		var right := Vector3(-fwd.z, 0.0, fwd.x)
-		var sign_side: float = 1.0 if ((unit.position.x - b_center.x) * right.x + (unit.position.z - b_center.z) * right.z) >= 0.0 else -1.0
-		var half_span: float = maxf(blocker.wall_size.x, blocker.wall_size.z) * 0.5 + 1.4
-		var flank_pos := Vector3(b_center.x, unit.position.y, b_center.z) + right * (sign_side * half_span)
-		if Vector2(unit.position.x, unit.position.z).distance_to(Vector2(flank_pos.x, flank_pos.z)) > 0.4:
-			_move_unit_toward(unit, flank_pos, delta)
-			return
-	_move_unit_toward(unit, target_pos, delta)
-
-func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.42) -> Object:
+func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.36) -> Object:
 	if current_room_info == null or not is_instance_valid(current_room_info):
 		return null
 	for wall in current_room_info.get_wall_obstacles():
@@ -915,37 +940,155 @@ func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.42) -> Obj
 			return wall
 	return null
 
-func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
+func _find_movement_blocker_along_segment(from_pos: Vector3, to_pos: Vector3) -> Object:
+	if current_room_info == null or not is_instance_valid(current_room_info):
+		return null
+	var seg_a := Vector3(from_pos.x, from_pos.y + 0.5, from_pos.z)
+	var seg_b := Vector3(to_pos.x, to_pos.y + 0.5, to_pos.z)
+	var closest_wall: Object = null
+	var best_t: float = 2.0
+	for wall in current_room_info.get_wall_obstacles():
+		if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
+			continue
+		var res: Dictionary = wall.intersects_segment(seg_a, seg_b, 0.32)
+		if bool(res.get("hit", false)):
+			var t_val: float = float(res.get("t", 1.0))
+			if t_val < best_t:
+				best_t = t_val
+				closest_wall = wall
+	return closest_wall
+
+func _push_out_of_overlapping_walls(unit: CombatUnitScript) -> void:
+	for _pass in range(2):
+		var blocker = _find_wall_blocking_point(unit.position, 0.36)
+		if blocker == null or not blocker.has_method(&"get_push_out_offset"):
+			break
+		var push: Vector3 = blocker.get_push_out_offset(unit.position, 0.42)
+		if push.is_zero_approx():
+			break
+		unit.position += push
+
+func _pick_unblocked_corner(unit: CombatUnitScript, blocker: Object, target_pos: Vector3) -> Vector3:
+	var corners: Array[Vector3] = blocker.get_flank_corners(1.25)
+	var b_center: Vector3 = blocker.get_world_center()
+	var resolved_corners: Array[Vector3] = []
+	for c in corners:
+		var cand: Vector3 = Vector3(c.x, unit.position.y, c.z)
+		var out_dir: Vector3 = Vector3(cand.x - b_center.x, 0.0, cand.z - b_center.z)
+		if out_dir.length() > 0.01:
+			out_dir = out_dir.normalized()
+			for _step in range(4):
+				if _find_wall_blocking_point(cand, 0.38) == null:
+					break
+				cand += out_dir * 1.6
+		resolved_corners.append(cand)
+
+	var uid: int = unit.get_instance_id()
+	var blocker_id: int = blocker.get_instance_id()
+	var mem: Variant = _unit_flank_memory.get(uid, null)
+	if mem is Dictionary:
+		var m := mem as Dictionary
+		if int(m.get("wall_id", -1)) == blocker_id and room_elapsed_time < float(m.get("expires", 0.0)):
+			var prev_idx: int = int(m.get("side_idx", 0))
+			var prev_wp: Vector3 = resolved_corners[clampi(prev_idx, 0, resolved_corners.size() - 1)]
+			if Vector2(unit.position.x, unit.position.z).distance_to(Vector2(prev_wp.x, prev_wp.z)) > 0.55:
+				return prev_wp
+
+	var best_idx: int = 0
+	var cost_a: float = Vector2(unit.position.x, unit.position.z).distance_to(Vector2(resolved_corners[0].x, resolved_corners[0].z)) + Vector2(resolved_corners[0].x, resolved_corners[0].z).distance_to(Vector2(target_pos.x, target_pos.z))
+	var cost_b: float = Vector2(unit.position.x, unit.position.z).distance_to(Vector2(resolved_corners[1].x, resolved_corners[1].z)) + Vector2(resolved_corners[1].x, resolved_corners[1].z).distance_to(Vector2(target_pos.x, target_pos.z))
+	if cost_b + 0.05 < cost_a:
+		best_idx = 1
+	elif absf(cost_a - cost_b) <= 0.05:
+		best_idx = 0 if (abs(uid) % 2 == 0) else 1
+
+	_unit_flank_memory[uid] = {
+		"wall_id": blocker_id,
+		"side_idx": best_idx,
+		"side": 1.0 if best_idx == 0 else -1.0,
+		"waypoint": resolved_corners[best_idx],
+		"expires": room_elapsed_time + 2.2,
+	}
+	return resolved_corners[best_idx]
+
+func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
+	if delta <= 0.0:
+		return
+	_push_out_of_overlapping_walls(unit)
+
 	var flat_target := Vector3(target_pos.x, unit.position.y, target_pos.z)
-	var to_target: Vector3 = flat_target - unit.position
-	var dist: float = to_target.length()
-	if dist <= 0.15 or delta <= 0.0:
+	if Vector2(unit.position.x, unit.position.z).distance_to(Vector2(flat_target.x, flat_target.z)) <= 0.15:
+		return
+
+	var uid: int = unit.get_instance_id()
+	var steer_target: Vector3 = flat_target
+	var blocker = _find_movement_blocker_along_segment(unit.position, flat_target)
+	if blocker != null and is_instance_valid(blocker):
+		steer_target = _pick_unblocked_corner(unit, blocker, flat_target)
+	else:
+		_unit_flank_memory.erase(uid)
+
+	var to_steer: Vector3 = Vector3(steer_target.x, unit.position.y, steer_target.z) - unit.position
+	var dist: float = to_steer.length()
+	if dist <= 0.05:
 		return
 	var mods: Dictionary = _get_terrain_mods(unit.position)
 	var speed_mult: float = float(mods.get("speed_multiplier", 1.0))
 	var step: float = minf(dist, unit.speed * speed_mult * delta)
-	var dir: Vector3 = to_target / dist
-	var next_pos: Vector3 = unit.position + dir * step
-	if _find_wall_blocking_point(next_pos, 0.42) == null:
-		unit.position = next_pos
-	else:
-		var perp_a := Vector3(-dir.z, 0.0, dir.x)
-		var perp_b := Vector3(dir.z, 0.0, -dir.x)
-		var cand_a: Vector3 = unit.position + (dir * 0.35 + perp_a * 0.93).normalized() * step
-		var cand_b: Vector3 = unit.position + (dir * 0.35 + perp_b * 0.93).normalized() * step
-		if _find_wall_blocking_point(cand_a, 0.42) == null:
-			unit.position = cand_a
-		elif _find_wall_blocking_point(cand_b, 0.42) == null:
-			unit.position = cand_b
-		else:
-			var slide_a: Vector3 = unit.position + perp_a * step
-			var slide_b: Vector3 = unit.position + perp_b * step
-			if _find_wall_blocking_point(slide_a, 0.42) == null:
-				unit.position = slide_a
-			elif _find_wall_blocking_point(slide_b, 0.42) == null:
-				unit.position = slide_b
+	var dir: Vector3 = to_steer / dist
+	var mem: Variant = _unit_flank_memory.get(uid, null)
+	var side_sign: float = float((mem as Dictionary).get("side", 1.0)) if (mem is Dictionary) else (1.0 if (abs(uid) % 2 == 0) else -1.0)
+
+	var test_angles: Array[float] = [0.0, 0.61 * side_sign, -0.61 * side_sign, 1.13 * side_sign, -1.13 * side_sign, 1.65 * side_sign, -1.65 * side_sign]
+	for ang in test_angles:
+		var rot_dir: Vector3 = dir.rotated(Vector3.UP, ang)
+		var cand: Vector3 = unit.position + rot_dir * step
+		if _find_wall_blocking_point(cand, 0.36) == null:
+			unit.position = cand
+			break
+
 	var new_elev: float = float(_get_terrain_mods(unit.position).get("elevation_offset", 0.0))
 	unit.position.y = lerpf(unit.position.y, new_elev, minf(1.0, delta * 10.0))
+
+func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
+	_navigate_unit_toward(unit, target_pos, delta)
+
+func _apply_unit_separation(unit: CombatUnitScript, delta: float) -> void:
+	if delta <= 0.0 or unit == null or not unit.is_alive:
+		return
+	var push := Vector3.ZERO
+	var peers: Array = squad_units if (not (unit is EnemyUnitScript)) else enemy_units
+	var uid: int = unit.get_instance_id()
+	for other in peers:
+		if other == unit or other == null or not is_instance_valid(other) or not other.is_alive:
+			continue
+		var diff := Vector2(unit.position.x - other.position.x, unit.position.z - other.position.z)
+		var d: float = diff.length()
+		if d < 0.95:
+			var sep_dir: Vector2
+			if d > 0.05:
+				sep_dir = diff / d
+			else:
+				var ang: float = float(abs(uid) % 8) * (TAU / 8.0)
+				sep_dir = Vector2(cos(ang), sin(ang))
+			var strength: float = (0.95 - d) / 0.95
+			push.x += sep_dir.x * strength
+			push.z += sep_dir.y * strength
+	if push.is_zero_approx():
+		return
+	var cand: Vector3 = unit.position + push.normalized() * minf(0.45, 2.8 * delta)
+	if _find_wall_blocking_point(cand, 0.36) == null:
+		unit.position = cand
+
+func _get_student_bond_level(unit: CombatUnitScript) -> int:
+	if unit == null or unit.unit_data == null:
+		return 1
+	var save_mgr := get_node_or_null("/root/SaveManager")
+	if save_mgr != null and &"bonds" in save_mgr:
+		var bonds_dict: Variant = save_mgr.get("bonds")
+		if bonds_dict is Dictionary:
+			return maxi(1, int((bonds_dict as Dictionary).get(unit.unit_data.id, 1)))
+	return 1
 
 func _get_terrain_mods(world_pos: Vector3) -> Dictionary:
 	if current_room_info != null and is_instance_valid(current_room_info):
@@ -1072,6 +1215,50 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 	else:
 		_update_status_banner("EX Skill Cast: %s!" % skill.name)
 
+func _finalize_commander_zone_drag(end_pos: Vector2) -> void:
+	if commander_system == null:
+		return
+	var iso_cam := _get_isometric_camera()
+	if iso_cam == null or not is_inside_tree():
+		return
+	var w_start: Vector3 = _project_to_ground(_drag_start_pos, iso_cam)
+	var w_end: Vector3 = _project_to_ground(end_pos, iso_cam)
+	var span: float = Vector2(w_start.x, w_start.z).distance_to(Vector2(w_end.x, w_end.z))
+	var radius: float = 6.5 if span < 2.0 else clampf(span, 4.0, 13.0)
+	commander_system.place_tactical_zone(w_start, radius)
+	_update_status_banner("Chỉ thị Chỉ Huy: Khoanh vùng tác chiến (bán kính %.1fm)" % radius)
+
+func _handle_commander_right_click(screen_pos: Vector2) -> void:
+	if commander_system == null:
+		return
+	var iso_cam := _get_isometric_camera()
+	if iso_cam == null or not is_inside_tree():
+		return
+	var world_pt: Vector3 = _project_to_ground(screen_pos, iso_cam)
+	var click_xz := Vector2(world_pt.x, world_pt.z)
+
+	for enemy in _get_living_enemies():
+		var e := enemy as CombatUnitScript
+		if Vector2(e.position.x, e.position.z).distance_to(click_xz) <= 2.2:
+			commander_system.set_priority_target(e)
+			_update_status_banner("Chỉ thị Chỉ Huy: Đánh dấu Mục Tiêu Trọng Yếu (%s)" % e.name)
+			return
+
+	var origin_centroid: Vector3 = _get_squad_centroid()
+	commander_system.set_advance_vector(origin_centroid, world_pt)
+	proxy_factory.update_order_beacon(order_beacon, world_pt, Color(0.25, 0.92, 1.0, 0.55), true)
+	_update_status_banner("Chỉ thị Chỉ Huy: Tiến quân theo hướng chỉ định")
+
+func _get_squad_centroid() -> Vector3:
+	var living: Array = _get_living_strikers()
+	if living.is_empty():
+		return Vector3.ZERO
+	var sum := Vector3.ZERO
+	for s in living:
+		var n := s as Node3D
+		sum += n.global_position if n.is_inside_tree() else n.position
+	return sum / float(living.size())
+
 func _finalize_box_selection(end_pos: Vector2) -> void:
 	if selection_manager == null:
 		return
@@ -1149,12 +1336,37 @@ func _on_striker_order_completed(u: CombatUnitScript) -> void:
 	_refresh_target_reticles()
 	_update_tactical_2d_overlay()
 
+func _on_directive_changed(summary_text: String) -> void:
+	if commander_system != null:
+		proxy_factory.update_tactical_zone_disc(
+			tactical_zone_disc,
+			commander_system.tactical_zone_center,
+			commander_system.tactical_zone_radius,
+			commander_system.current_stance,
+			commander_system.has_tactical_zone
+		)
+		if not commander_system.has_advance_vector and order_beacon != null:
+			proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
+	if combat_hud != null and not summary_text.is_empty():
+		combat_hud.update_commander_status(summary_text)
+	_refresh_target_reticles()
+	_update_tactical_2d_overlay()
+
+func _on_priority_target_changed(_target: Node3D) -> void:
+	_refresh_target_reticles()
+	_update_tactical_2d_overlay()
+
 func _refresh_target_reticles() -> void:
 	var focused_enemies: Array = []
 	for s in squad_units:
 		if s != null and is_instance_valid(s) and s.is_alive and s.has_player_order and s.current_order_type == "FOCUS_FIRE":
 			if s.order_target_node != null and is_instance_valid(s.order_target_node):
 				focused_enemies.append(s.order_target_node)
+
+	if commander_system != null:
+		var prio: Node3D = commander_system.get_valid_priority_target()
+		if prio != null and not focused_enemies.has(prio):
+			focused_enemies.append(prio)
 
 	for e in enemy_units:
 		if e != null and is_instance_valid(e):
@@ -1164,10 +1376,40 @@ func _update_tactical_2d_overlay() -> void:
 	var iso_cam := _get_isometric_camera()
 	var has_cam: bool = iso_cam != null and is_instance_valid(iso_cam) and iso_cam.is_inside_tree()
 
+	if commander_system != null:
+		proxy_factory.update_tactical_zone_disc(
+			tactical_zone_disc,
+			commander_system.tactical_zone_center,
+			commander_system.tactical_zone_radius,
+			commander_system.current_stance,
+			commander_system.has_tactical_zone
+		)
+
 	if selection_box_overlay != null:
 		var settings_mgr := get_node_or_null("/root/SettingsManager")
 		if settings_mgr != null and &"show_group_frame" in settings_mgr:
 			selection_box_overlay.show_group_frame = bool(settings_mgr.get("show_group_frame"))
+
+		if not _is_dragging_box:
+			var z_scr := Vector2.ZERO
+			var z_rad_px: float = 0.0
+			var arrow_info: Dictionary = {}
+			if has_cam and commander_system != null and commander_system.has_tactical_zone:
+				var zc: Vector3 = commander_system.tactical_zone_center
+				if not iso_cam.is_position_behind(zc):
+					z_scr = iso_cam.unproject_position(zc)
+					var z_edge: Vector3 = zc + Vector3(commander_system.tactical_zone_radius, 0.0, 0.0)
+					if not iso_cam.is_position_behind(z_edge):
+						z_rad_px = clampf(z_scr.distance_to(iso_cam.unproject_position(z_edge)), 20.0, 400.0)
+			if has_cam and commander_system != null and commander_system.has_advance_vector:
+				if not iso_cam.is_position_behind(commander_system.advance_origin) and not iso_cam.is_position_behind(commander_system.advance_target):
+					arrow_info = {
+						"active": true,
+						"from": iso_cam.unproject_position(commander_system.advance_origin),
+						"to": iso_cam.unproject_position(commander_system.advance_target),
+						"color": Color(1.0, 0.85, 0.22, 0.90),
+					}
+			selection_box_overlay.update_commander_markers(z_scr, z_rad_px, arrow_info)
 
 		var screen_pts: Array[Vector2] = []
 		var order_lines: Array[Dictionary] = []
@@ -1249,24 +1491,7 @@ func _update_tactical_2d_overlay() -> void:
 		health_bar_overlay.update_bars(unit_bars, boss_bar)
 
 func _handle_right_click_order(screen_pos: Vector2) -> void:
-	var iso_cam := _get_isometric_camera()
-	if iso_cam == null or selection_manager == null or selection_manager.selected_units.is_empty():
-		return
-	var world_pt: Vector3 = _project_to_ground(screen_pos, iso_cam)
-	var click_xz := Vector2(world_pt.x, world_pt.z)
-
-	for enemy in _get_living_enemies():
-		var e := enemy as CombatUnitScript
-		if Vector2(e.position.x, e.position.z).distance_to(click_xz) <= 1.6:
-			selection_manager.issue_focus_fire(e)
-			return
-
-	for cp in cover_points:
-		if cp != null and is_instance_valid(cp) and Vector2(cp.position.x, cp.position.z).distance_to(click_xz) <= 1.5:
-			selection_manager.issue_cover_order(cp)
-			return
-
-	selection_manager.issue_move_order(world_pt)
+	_handle_commander_right_click(screen_pos)
 
 func _project_to_ground(screen_pos: Vector2, cam: Camera3D, ground_y: float = 0.0) -> Vector3:
 	if cam == null or not is_instance_valid(cam) or not cam.is_inside_tree():
@@ -1444,6 +1669,11 @@ func _connect_signals() -> void:
 		ex_skill_system.skill_activated.connect(_on_ex_skill_activated)
 	if projectile_manager != null and not projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
 		projectile_manager.projectile_wall_hit.connect(_on_projectile_wall_hit)
+	if commander_system != null:
+		if not commander_system.directive_changed.is_connected(_on_directive_changed):
+			commander_system.directive_changed.connect(_on_directive_changed)
+		if not commander_system.priority_target_changed.is_connected(_on_priority_target_changed):
+			commander_system.priority_target_changed.connect(_on_priority_target_changed)
 
 	if card_draft_panel != null:
 		for i in range(3):
@@ -1484,14 +1714,11 @@ func _disconnect_signals() -> void:
 		ex_skill_system.skill_activated.disconnect(_on_ex_skill_activated)
 	if projectile_manager != null and is_instance_valid(projectile_manager) and projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
 		projectile_manager.projectile_wall_hit.disconnect(_on_projectile_wall_hit)
-
-func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
-	if health_bar_overlay == null:
-		return
-	if wall_destroyed:
-		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 1.2, 0.0), "💥 BREACH!", Color(1.0, 0.85, 0.2), true)
-	elif not penetrated:
-		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 0.9, 0.0), "🧱 BLOCKED", Color(0.85, 0.72, 0.52), false)
+	if commander_system != null and is_instance_valid(commander_system):
+		if commander_system.directive_changed.is_connected(_on_directive_changed):
+			commander_system.directive_changed.disconnect(_on_directive_changed)
+		if commander_system.priority_target_changed.is_connected(_on_priority_target_changed):
+			commander_system.priority_target_changed.disconnect(_on_priority_target_changed)
 
 	if card_draft_panel != null and is_instance_valid(card_draft_panel):
 		for i in range(3):
@@ -1508,3 +1735,11 @@ func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, 
 		var hub_btn := result_panel.find_child("ReturnHubButton", true, false) as Button
 		if hub_btn != null and hub_btn.pressed.is_connected(_on_return_hub_pressed):
 			hub_btn.pressed.disconnect(_on_return_hub_pressed)
+
+func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
+	if health_bar_overlay == null:
+		return
+	if wall_destroyed:
+		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 1.2, 0.0), "💥 BREACH!", Color(1.0, 0.85, 0.2), true)
+	elif not penetrated:
+		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 0.9, 0.0), "🧱 BLOCKED", Color(0.85, 0.72, 0.52), false)

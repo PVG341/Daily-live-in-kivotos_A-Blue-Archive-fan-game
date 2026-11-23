@@ -216,6 +216,51 @@ func _run_tests() -> void:
 	check(test_wall.is_destroyed == true, "Shotgun Breach must destroy the armor_tier=2 wall segment")
 	check(arena.current_room_info.check_line_of_sight(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 0)["clear"] == true, "Destroyed wall must leave a breached hole allowing normal bullets through")
 
+	# 4c. Phase C — Anti-Stuck Barricade/Bunker Navigation & Crowd Separation
+	check(arena.commander_system != null and arena.utility_ai != null, "Arena must initialize CommanderDirectiveSystem and UtilityAIManager")
+	striker0.clear_player_order()
+	striker1.clear_player_order()
+	striker0.position = Vector3(0.0, 0.0, 7.2)
+	striker1.position = Vector3(0.2, 0.0, 7.2)
+	for e_nav in arena.enemy_units:
+		if e_nav.is_alive:
+			e_nav.position = Vector3(0.0, 0.0, -17.0)
+	var s0_start: Vector3 = striker0.position
+	var s1_start: Vector3 = striker1.position
+	for _nav_tick in range(15):
+		arena.step_combat(0.2)
+	check(striker0.position.distance_to(s0_start) > 2.5, "striker0 must flank cleanly around CoverCraterRim barricade & bunker without getting stuck, moved %.2f" % striker0.position.distance_to(s0_start))
+	check(striker1.position.distance_to(s1_start) > 2.5, "striker1 must flank cleanly around CoverCraterRim barricade & bunker without getting stuck, moved %.2f" % striker1.position.distance_to(s1_start))
+	check(striker0.position.distance_to(striker1.position) >= 0.45, "Friendly unit separation must prevent strikers from stacking on top of each other")
+
+	# 4d. Phase C — Commander Directive System & Utility AI
+	arena.commander_system.place_tactical_zone(Vector3(-14.0, 0.0, 12.0), 5.0)
+	check(arena.tactical_zone_disc != null and arena.tactical_zone_disc.visible == true, "place_tactical_zone must reveal 3D TacticalZoneDisc")
+	var zone_eval: Dictionary = arena.utility_ai.evaluate_unit_utility(
+		striker0, arena.squad_units, arena.enemy_units, arena.cover_points, arena.active_aoes, arena.commander_system, arena.current_room_info, 10
+	)
+	check(str(zone_eval.get("action", "")) == "ADVANCE_TO_ZONE", "UtilityAI must prioritize ADVANCE_TO_ZONE when unit is outside commanded zone, got %s" % str(zone_eval.get("action", "")))
+
+	arena.commander_system.clear_directives()
+	var prio_enemy = null
+	for pe in arena.enemy_units:
+		if pe.is_alive:
+			prio_enemy = pe
+			break
+	if prio_enemy != null:
+		arena.commander_system.set_priority_target(prio_enemy)
+		var prio_reticle := prio_enemy.get_node_or_null("VisualRoot/TargetReticle") as Node3D
+		check(prio_reticle != null and prio_reticle.visible == true, "set_priority_target must reveal enemy VisualRoot/TargetReticle")
+		var prio_eval: Dictionary = arena.utility_ai.evaluate_unit_utility(
+			striker1, arena.squad_units, arena.enemy_units, arena.cover_points, arena.active_aoes, arena.commander_system, arena.current_room_info, 10
+		)
+		check(str(prio_eval.get("action", "")) == "FOCUS_PRIORITY_TARGET", "UtilityAI must prioritize FOCUS_PRIORITY_TARGET when priority enemy is set")
+
+	arena.commander_system.toggle_tactical_slow_mo(true)
+	check(arena.commander_system.get_effective_time_scale() < 1.0, "toggle_tactical_slow_mo(true) must slow combat time scale")
+	arena.commander_system.toggle_tactical_slow_mo(false)
+	arena.commander_system.clear_directives()
+
 	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
 	for enemy in arena.enemy_units:
 		if enemy.is_alive:
@@ -243,17 +288,30 @@ func _run_tests() -> void:
 	check(arena.health_bar_overlay != null and bool(arena.health_bar_overlay.boss_bar.get("visible", false)) == true, "BOSS room must populate CombatHealthBarOverlay.boss_bar")
 
 	var target_striker = arena.squad_units[0]
+	target_striker.receive_hold_position()
 	var striker_hp_before: int = target_striker.current_hp
 	var spawned_aoe = arena.spawn_boss_telegraphed_aoe(spawned_boss, target_striker.position)
 	check(spawned_aoe != null, "spawn_boss_telegraphed_aoe must create a TelegraphedAoE")
 	check(arena.active_aoes.size() == 1, "active_aoes must track the spawned TelegraphedAoE")
 
-	# Step past warn_duration so AoE detonates on striker and removes itself cleanly
+	# Verify autonomous EVADE_AOE reaction when a second unit stands inside active TelegraphedAoE
+	var evade_striker = arena.squad_units[1]
+	evade_striker.clear_player_order()
+	var danger_aoe = arena.spawn_boss_telegraphed_aoe(spawned_boss, evade_striker.position)
+	var evade_eval: Dictionary = arena.utility_ai.evaluate_unit_utility(
+		evade_striker, arena.squad_units, arena.enemy_units, arena.cover_points, arena.active_aoes, arena.commander_system, arena.current_room_info, 1
+	)
+	check(str(evade_eval.get("action", "")) == "EVADE_AOE", "UtilityAI must evaluate EVADE_AOE when unit stands inside TelegraphedAoE radius")
+	var evade_start_pos: Vector3 = evade_striker.position
+
+	# Step past warn_duration so AoE detonates on held striker, while evade_striker dodges away
 	arena.step_combat(0.5)
-	check(arena.active_aoes.size() == 1, "AoE must remain active before warn_duration elapses")
+	check(arena.active_aoes.size() == 2, "AoEs must remain active before warn_duration elapses")
+	check(evade_striker.position.distance_to(evade_start_pos) > 1.0, "Autonomous Utility AI must actively dodge out of danger zone during EVADE_AOE")
 	arena.step_combat(2.5)
-	check(target_striker.current_hp < striker_hp_before, "Detonated TelegraphedAoE must damage striker inside radius")
-	check(arena.active_aoes.is_empty(), "Detonated TelegraphedAoE must be freed and removed from active_aoes")
+	check(target_striker.current_hp < striker_hp_before, "Detonated TelegraphedAoE must damage held striker inside radius")
+	check(arena.active_aoes.is_empty(), "Detonated TelegraphedAoEs must be freed and removed from active_aoes")
+	check(not is_instance_valid(danger_aoe), "Detonated danger_aoe must be freed from ObjectDB")
 
 	# 7. Cleanup & Orphan Node Check
 	root.remove_child(arena)

@@ -42,8 +42,8 @@ D:\This PC\Project\test
 │   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, HubSceneController, DoorPortal, InteractiveDoor, InteractiveElevator, ElevatorCallButton, FloorVisibilityZone, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
 │   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
 │   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
-│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, CombatHealthBarOverlay, DestructibleWall3D, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
-│   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI
+│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, CombatHealthBarOverlay, DestructibleWall3D, CommanderDirectiveSystem, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
+│   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI, UtilityAIManager
 │   └── ui/            # HUDManager, PhoneOSManager, PauseMenuManager, ModManagerUI, CombatHUD
 ├── shaders/           # cel_toon_shader.gdshader, outline_shader.gdshader
 └── tests/             # 25 bộ test headless (tests/test_*.gd)
@@ -177,6 +177,14 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **Phân mảnh Tường Phá hủy được (`DestructibleWall3D` & `CombatRoomData`):** Tự động tách các tường nhà, bunker, trụ cầu, parapet và chướng ngại vật trong phòng thành từng module `DestructibleWall3D` với `armor_tier` (`1` = gỗ/chắn nhẹ, `2` = tường gạch/nhà, `3` = bê tông/trụ cầu) và `max_hp`. Khi bị phá hủy sẽ tạo lỗ hổng (đống gạch vụn thấp `RubbleRoot`), tắt va chạm và mở đường di chuyển/tầm nhìn.
 * **Chặn Đạn, Kiểm tra Tầm Nhìn & Lực Xuyên (`ProjectileManager` & `CombatArenaController`):** Đạn bắn thường (`penetration_power = 0`) bị chặn bởi tường có `armor_tier > 0` (`🧱 BLOCKED`); đơn vị tự động vòng cạnh bên (`_move_unit_around_walls()`) để tìm góc bắn rõ LOS. Đạn hoặc skill có `penetration_power >= armor_tier` xuyên qua tường với sát thương suy giảm theo số lớp tường đã xuyên.
 * **Kỹ năng Đục Tường / Xuyên Tường (`SkillData` & `SkillTargetingOverlay`):** Bổ sung `[3] Shotgun Breach (2)` (hình nón `CONE`, đục tường tầm gần) và `[4] Railgun Beam (3)` (tia thẳng `LINE`, xuyên tường bê tông `armor_tier = 3`), cùng xem trước hình nón/tia 2D và cảnh báo đỏ khi bị tường chắn LOS.
+
+---
+
+## 10. Phase C — Chế độ Chỉ huy ("Pick Me Up"), Utility AI & Sửa Lỗi Kẹt Tường
+
+* **Hệ thống Chỉ thị Chỉ huy (`CommanderDirectiveSystem` & `CombatArenaController`):** Thay thế điều khiển vi mô RTS trực tiếp bằng các chỉ thị chiến thuật: kéo chuột trái để khoanh **Vùng Tác Chiến (`TacticalZoneDisc`)**, chuột phải vào địch để gắn **Mục Tiêu Trọng Yếu (`TargetReticle`)**, chuột phải ra đất để vẽ **Mũi tên Hướng Tiến Quân (`advance_arrow`)**, phím `Z / X / V` đổi tư thế đội hình (`TỔNG TẤN CÔNG` / `CÂN BẰNG` / `PHÒNG THỦ`), phím `TAB` bật tắt **Tactical Slow-Mo 0.25x**, phím `G` xóa chỉ thị.
+* **Utility AI Tự chủ (`UtilityAIManager`):** Chấm điểm liên tục 7 hành vi (`EVADE_AOE` né vòng đỏ `TelegraphedAoE`, `SURVIVAL_RETREAT` rút lui khi máu thấp, `HEAL_ALLY`, `ADVANCE_TO_ZONE`, `FOCUS_PRIORITY_TARGET`, `TAKE_COVER_AND_ENGAGE`, `ENGAGE_BEST_ENEMY`), kết hợp cấp Bond để tính độ tuân lệnh và tự động bỏ qua các điểm nấp không còn tầm nhìn tới địch.
+* **Điều hướng Chống Kẹt & Tách Đơn vị (`DestructibleWall3D` & `CombatArenaController`):** Khắc phục triệt để lỗi 2 nhân vật đi qua lại hoặc chồng lên nhau ở mép tường (`CoverCraterRim` / `Bunker`): đẩy thoát chồng lấn tức thì (`get_push_out_offset()`), chọn waypoint góc ngoài không bị chặn (`get_flank_corners()` kèm `_unit_flank_memory`), lái 7 góc quạt `[0°, ±35°, ±65°, ±95°]` và tách khoảng cách đồng minh (`_apply_unit_separation()`).
 
 
 

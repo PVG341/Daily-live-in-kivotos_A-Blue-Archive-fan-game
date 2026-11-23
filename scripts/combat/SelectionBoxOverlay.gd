@@ -7,6 +7,9 @@ var drag_rect: Rect2 = Rect2()
 var selected_screen_points: Array[Vector2] = []
 var order_lines: Array[Dictionary] = []
 var show_group_frame: bool = false
+var tactical_zone_screen_center: Vector2 = Vector2.ZERO
+var tactical_zone_screen_radius: float = 0.0
+var advance_arrow: Dictionary = {}
 
 func set_drag_rect(active: bool, rect: Rect2) -> void:
 	is_dragging = active
@@ -18,7 +21,31 @@ func update_tactical_markers(p_points: Array[Vector2], p_lines: Array[Dictionary
 	order_lines = p_lines.duplicate(true)
 	queue_redraw()
 
+## Updates 2D screen-space Commander tactical zone ring and directional advance arrow.
+func update_commander_markers(zone_center: Vector2, zone_radius: float, arrow_info: Dictionary) -> void:
+	tactical_zone_screen_center = zone_center
+	tactical_zone_screen_radius = maxf(0.0, zone_radius)
+	advance_arrow = arrow_info.duplicate(true)
+	queue_redraw()
+
 func _draw() -> void:
+	# 0. Draw Commander tactical zone & advance vector arrow
+	if tactical_zone_screen_radius > 5.0:
+		draw_circle(tactical_zone_screen_center, tactical_zone_screen_radius, Color(0.22, 0.88, 1.0, 0.09))
+		draw_arc(tactical_zone_screen_center, tactical_zone_screen_radius, 0.0, TAU, 48, Color(0.25, 0.92, 1.0, 0.72), 2.0)
+
+	if bool(advance_arrow.get("active", false)):
+		var a_from: Vector2 = advance_arrow.get("from", Vector2.ZERO)
+		var a_to: Vector2 = advance_arrow.get("to", Vector2.ZERO)
+		var a_col: Color = advance_arrow.get("color", Color(1.0, 0.82, 0.22, 0.90))
+		if a_from.distance_to(a_to) > 8.0:
+			draw_line(a_from, a_to, a_col, 3.0)
+			var dir2: Vector2 = (a_to - a_from).normalized()
+			var wing1: Vector2 = a_to - dir2.rotated(0.45) * 16.0
+			var wing2: Vector2 = a_to - dir2.rotated(-0.45) * 16.0
+			draw_line(a_to, wing1, a_col, 3.0)
+			draw_line(a_to, wing2, a_col, 3.0)
+
 	# 1. Draw active order / focus-fire target lines
 	for line_info in order_lines:
 		var from_pt: Vector2 = line_info.get("from", Vector2.ZERO)
