@@ -29,11 +29,7 @@ func update_commander_markers(zone_center: Vector2, zone_radius: float, arrow_in
 	queue_redraw()
 
 func _draw() -> void:
-	# 0. Draw Commander tactical zone & advance vector arrow
-	if tactical_zone_screen_radius > 5.0:
-		draw_circle(tactical_zone_screen_center, tactical_zone_screen_radius, Color(0.22, 0.88, 1.0, 0.09))
-		draw_arc(tactical_zone_screen_center, tactical_zone_screen_radius, 0.0, TAU, 48, Color(0.25, 0.92, 1.0, 0.72), 2.0)
-
+	# 0. Draw Commander directional advance vector arrow (tactical zones use aligned 3D discs)
 	if bool(advance_arrow.get("active", false)):
 		var a_from: Vector2 = advance_arrow.get("from", Vector2.ZERO)
 		var a_to: Vector2 = advance_arrow.get("to", Vector2.ZERO)

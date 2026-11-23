@@ -2,6 +2,9 @@
 class_name CombatHUD
 extends CanvasLayer
 
+signal commander_tool_clicked(tool_id: String)
+signal striker_portrait_clicked(student_id: String)
+
 var displayed_cost: float = 0.0
 var displayed_max_cost: float = 10.0
 var displayed_wave: int = 1
@@ -10,11 +13,59 @@ var striker_orders: Dictionary = {}
 var selected_striker_ids: Array[String] = []
 var displayed_selection_summary: String = ""
 var active_buff_ids: Array[String] = []
+var active_tool_id: String = "NONE"
+var _tool_buttons: Dictionary = {}
 
 func _ready() -> void:
+	_ensure_commander_toolbar()
 	update_cost(displayed_cost, displayed_max_cost)
 	update_wave(displayed_wave)
 	_refresh_buff_row()
+	set_active_commander_tool("NONE")
+
+func _ensure_commander_toolbar() -> void:
+	if find_child("CommanderToolBar", true, false) != null:
+		return
+	var bar := HBoxContainer.new()
+	bar.name = "CommanderToolBar"
+	bar.anchor_top = 1.0
+	bar.anchor_bottom = 1.0
+	bar.offset_left = 24.0
+	bar.offset_top = -164.0
+	bar.offset_right = 680.0
+	bar.offset_bottom = -128.0
+	bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	bar.add_theme_constant_override("separation", 8)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bar)
+
+	var defs: Array[Dictionary] = [
+		{"id": "ASSAULT", "label": "⚔️ Giao Tranh [Z]"},
+		{"id": "DEFENSE", "label": "🛡️ Phòng Thủ [V]"},
+		{"id": "FREESHOT", "label": "💣 Freeshot [B]"},
+		{"id": "HOLD_FIRE", "label": "🚫 Giữ Hỏa Lực [H]"},
+		{"id": "CLEAR", "label": "✖ Hủy Lệnh [G]"},
+	]
+	for item: Dictionary in defs:
+		var tid: String = str(item["id"])
+		var btn := Button.new()
+		btn.name = "ToolBtn_%s" % tid
+		btn.text = str(item["label"])
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.pressed.connect(func() -> void: commander_tool_clicked.emit(tid))
+		bar.add_child(btn)
+		_tool_buttons[tid] = btn
+
+func set_active_commander_tool(tool_id: String) -> void:
+	active_tool_id = tool_id
+	for tid: String in _tool_buttons:
+		var btn: Button = _tool_buttons[tid] as Button
+		if btn == null or not is_instance_valid(btn):
+			continue
+		if tid == active_tool_id and tid != "NONE":
+			btn.modulate = Color(1.0, 0.85, 0.25)
+		else:
+			btn.modulate = Color.WHITE
 
 func update_cost(current: float, max_cost: float = 10.0) -> void:
 	displayed_cost = current
@@ -39,9 +90,9 @@ func update_selected_units(selected_ids: Array[String], summary_text: String = "
 	if not summary_text.strip_edges().is_empty():
 		displayed_selection_summary = summary_text
 	elif selected_striker_ids.is_empty():
-		displayed_selection_summary = "Chỉ huy [Z/X/V]: Đổi Đội Hình | Kéo Chuột Trái: Khoanh Vùng | Chuột Phải: Mục Tiêu/Hướng | TAB: Slow-Mo"
+		displayed_selection_summary = "Mặc định: Click/Kéo chọn lính [F1-F4/~] | [Z] Giao tranh [V] Phòng thủ [B] Freeshot [H] Giữ hỏa lực"
 	else:
-		displayed_selection_summary = "Đang chọn (%d): %s" % [selected_striker_ids.size(), ", ".join(selected_striker_ids)]
+		displayed_selection_summary = "Đang chọn (%d): %s — Chọn công cụ [Z/V/B] rồi Click bản đồ" % [selected_striker_ids.size(), ", ".join(selected_striker_ids)]
 
 	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
 	if sel_lbl != null:
@@ -73,9 +124,10 @@ func clear_hud() -> void:
 	displayed_selection_summary = ""
 	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
 	if sel_lbl != null:
-		sel_lbl.text = "Chỉ huy [Z/X/V]: Đổi Đội Hình | Kéo Chuột Trái: Khoanh Vùng | Chuột Phải: Mục Tiêu/Hướng | TAB: Slow-Mo"
+		sel_lbl.text = "Mặc định: Click/Kéo chọn lính [F1-F4/~] | [Z] Giao tranh [V] Phòng thủ [B] Freeshot [H] Giữ hỏa lực"
 	_refresh_striker_portraits()
 	_refresh_buff_row()
+	set_active_commander_tool("NONE")
 
 func _refresh_striker_portraits() -> void:
 	var portraits := find_child("StrikerPortraits", true, false) as Container
@@ -97,6 +149,9 @@ func _refresh_striker_portraits() -> void:
 		if existing == null:
 			existing = Label.new()
 			existing.name = "Portrait_%s" % sid
+			existing.mouse_filter = Control.MOUSE_FILTER_STOP
+			existing.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			existing.gui_input.connect(_on_portrait_gui_input.bind(sid))
 			portraits.add_child(existing)
 		var is_sel: bool = selected_striker_ids.has(sid)
 		var order_str: String = str(striker_orders.get(sid, ""))
@@ -104,6 +159,13 @@ func _refresh_striker_portraits() -> void:
 		var base_text: String = "%s: %d/%d%s" % [sid, hp_vec.x, hp_vec.y, order_tag]
 		existing.text = "★ [%s]" % base_text if is_sel else base_text
 		existing.modulate = Color(0.35, 0.95, 1.0) if is_sel else Color.WHITE
+
+func _on_portrait_gui_input(event: InputEvent, student_id: String) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			striker_portrait_clicked.emit(student_id)
+			get_viewport().set_input_as_handled()
 
 func _refresh_buff_row() -> void:
 	var buff_row := find_child("BuffRow", true, false) as Container

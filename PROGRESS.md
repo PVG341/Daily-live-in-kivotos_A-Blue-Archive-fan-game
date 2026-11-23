@@ -186,5 +186,16 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **Utility AI Tự chủ (`UtilityAIManager`):** Chấm điểm liên tục 7 hành vi (`EVADE_AOE` né vòng đỏ `TelegraphedAoE`, `SURVIVAL_RETREAT` rút lui khi máu thấp, `HEAL_ALLY`, `ADVANCE_TO_ZONE`, `FOCUS_PRIORITY_TARGET`, `TAKE_COVER_AND_ENGAGE`, `ENGAGE_BEST_ENEMY`), kết hợp cấp Bond để tính độ tuân lệnh và tự động bỏ qua các điểm nấp không còn tầm nhìn tới địch.
 * **Điều hướng Chống Kẹt & Tách Đơn vị (`DestructibleWall3D` & `CombatArenaController`):** Khắc phục triệt để lỗi 2 nhân vật đi qua lại hoặc chồng lên nhau ở mép tường (`CoverCraterRim` / `Bunker`): đẩy thoát chồng lấn tức thì (`get_push_out_offset()`), chọn waypoint góc ngoài không bị chặn (`get_flank_corners()` kèm `_unit_flank_memory`), lái 7 góc quạt `[0°, ±35°, ±65°, ±95°]` và tách khoảng cách đồng minh (`_apply_unit_separation()`).
 
+---
+
+## 11. Phase D — Công cụ Chỉ huy Đa Vùng, Lệnh Riêng Từng Nhân Vật, Vùng Freeshot & Giữ Hỏa Lực Không Chặn Di Chuyển
+
+* **Quy trình Công cụ Chỉ huy Chuẩn ("Chọn Nhân Vật -> Chọn Công Cụ -> Click Bản Đồ"):** Bổ sung thanh `CommanderToolBar` trong `CombatHUD` (`focus_mode = FOCUS_NONE`) với các nút và phím tắt `[Z]` **Vùng Giao Tranh (`ASSAULT`)**, `[V]` **Vùng Phòng Thủ (`DEFENSE`)**, `[B]` **Vùng Freeshot (`FREESHOT`)**, `[H]` **Giữ Hỏa Lực (`HOLD_FIRE`)**, `[G]` **Hủy Chỉ Thị** (loại bỏ chế độ Vùng Cân Bằng). Chuột trái mặc định chọn từng nhân vật (`Click` / kéo hộp / `F1`–`F4` / `~` / click chân dung HUD) và chỉ đặt vùng khi đang chọn công cụ; chuột phải không còn tự tạo vùng tác chiến.
+* **Đa Vùng Đồng Thời & Chỉ Thị Độc Lập (`CommanderDirectiveSystem` & `ChibiProxyFactory`):** Cho phép tồn tại nhiều vùng tác chiến song song (`active_zones`), mỗi Striker lưu ánh xạ vùng (`unit_zone_map`) và mục tiêu ưu tiên (`unit_target_map`) riêng biệt; render đồng bộ nhiều vòng 3D (`active_zone_discs`) với nhãn tên nhân vật được giao và bỏ vòng tròn 2D bị lệch góc ở `SelectionBoxOverlay`.
+* **Phá Kẹt Vòng Tròn & Chống Va Chạm Đồng Minh (`UtilityAIManager` & `CombatArenaController`):** Khắc phục lỗi đứng khựng ở rìa vòng tròn bằng cơ chế trễ trạng thái (`_in_zone_<id>`) kết hợp điểm neo 4 góc phần tư sâu bên trong vùng (`_get_zone_inner_anchor()`); khóa đơn vị `DEFENSE` giữ đội hình chiến đấu bên trong vùng và cho phép đơn vị `ASSAULT` tiến/rút tự do sau khi vào vùng. Nâng cấp tránh đồng minh trong `_navigate_unit_toward()` (`_is_step_blocked_by_peer()`) và tăng lực đẩy tách `_apply_unit_separation()` (`1.35m`).
+* **Vùng Freeshot (`FREESHOT_BOMBARD`) & Giữ Hỏa Lực Không Khóa Di Chuyển (`CombatUnit`):** Cho phép chỉ định vùng oanh tạc pháo kích liên tục (`_fire_freeshot_shell()` gây sát thương AoE trong bán kính vùng). Đặt `is_holding_fire` là cờ độc lập trong `CombatUnit` để khi bật `[H]`, nhân vật vẫn nhận lệnh di chuyển, né AoE và đổi vùng bình thường, chỉ chặn hoàn toàn hành động nổ súng.
+* **Kiểm thử Xác minh (`tests/test_combat_arena_flow.gd`):** Bổ sung `# 4e.` kiểm tra chọn công cụ `CommanderToolBar`, click chân dung HUD, tạo đồng thời 3 vùng `DEFENSE`/`ASSAULT`/`FREESHOT` cho 3 Striker, vào sâu trong vùng phòng thủ bằng hysteresis, `set_advance_vector` không tự tạo vùng, và `HOLD_FIRE` cho phép di chuyển nhưng 0 phát đạn bắn ra (25/25 suite pass, `0` orphan nodes).
+
+
 
 
