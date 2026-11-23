@@ -261,6 +261,81 @@ func _run_tests() -> void:
 	arena.commander_system.toggle_tactical_slow_mo(false)
 	arena.commander_system.clear_directives()
 
+	# 4e. Phase 5 — Multi-Zone Tools, Per-Unit Directives, Hysteresis & Non-Blocking HOLD_FIRE
+	arena.combat_hud.commander_tool_clicked.emit("FREESHOT")
+	check(arena.commander_system.active_tool == 3, "Tool button FREESHOT must arm FREESHOT_ZONE tool")
+	check(arena.combat_hud.active_tool_id == "FREESHOT", "CombatHUD must highlight FREESHOT tool button")
+	arena.commander_system.cancel_tool()
+	check(arena.commander_system.active_tool == 0 and arena.combat_hud.active_tool_id == "NONE", "cancel_tool must return cursor to default Selection")
+
+	arena.combat_hud.striker_portrait_clicked.emit(striker1.unit_data.id)
+	check(arena.selection_manager.selected_units.size() == 1 and arena.selection_manager.selected_units[0] == striker1, "Clicking HUD portrait must select individual Striker")
+	arena.selection_manager.deselect_all()
+
+	# Place 3 simultaneous zones for 3 different Strikers
+	var striker2 = arena.squad_units[2]
+	var z_def_center := Vector3(-12.0, 0.0, 12.0)
+	var z_assault_center := Vector3(12.0, 0.0, 10.0)
+	var z_free_center := Vector3(0.0, 0.0, -14.0)
+	arena.commander_system.create_zone_for_units("DEFENSE", z_def_center, 6.0, [striker0.unit_data.id])
+	arena.commander_system.create_zone_for_units("ASSAULT", z_assault_center, 5.5, [striker1.unit_data.id])
+	arena.commander_system.create_zone_for_units("FREESHOT", z_free_center, 4.5, [striker2.unit_data.id])
+	check(arena.commander_system.active_zones.size() == 3, "Commander must support 3 simultaneous active zones")
+	check(arena.active_zone_discs.size() == 2 and arena.tactical_zone_disc.visible == true, "Arena must display all 3 active zone 3D discs simultaneously")
+
+	var fs_eval: Dictionary = arena.utility_ai.evaluate_unit_utility(
+		striker2, arena.squad_units, arena.enemy_units, arena.cover_points, arena.active_aoes, arena.commander_system, arena.current_room_info, 10
+	)
+	check(str(fs_eval.get("action", "")) == "FREESHOT_BOMBARD", "FREESHOT zone unit must evaluate FREESHOT_BOMBARD, got %s" % str(fs_eval.get("action", "")))
+
+	# Verify entry hysteresis moves striker0 deep inside Defense zone without getting trapped on perimeter rim
+	striker0.clear_player_order()
+	striker0.position = Vector3(-12.0, 0.0, 21.0)
+	striker1.clear_player_order()
+	striker1.position = Vector3(12.0, 0.0, 19.0)
+	for _hz_tick in range(18):
+		arena.step_combat(0.2)
+	var dist_def_center: float = Vector2(striker0.position.x, striker0.position.z).distance_to(Vector2(z_def_center.x, z_def_center.z))
+	check(dist_def_center <= 5.4, "DEFENSE zone unit must enter cleanly inside perimeter (<=5.4m), got %.2fm" % dist_def_center)
+
+	# Verify set_advance_vector does NOT implicitly spawn a tactical zone
+	arena.commander_system.clear_directives()
+	check(arena.commander_system.active_zones.is_empty(), "clear_directives must clear active_zones")
+	arena.commander_system.set_advance_vector(Vector3.ZERO, Vector3(5.0, 0.0, 5.0))
+	check(arena.commander_system.active_zones.is_empty() and arena.commander_system.has_tactical_zone == false, "set_advance_vector must NOT create a tactical zone")
+	arena.commander_system.clear_directives()
+
+	# Verify non-blocking HOLD_FIRE allows MOVE orders while suppressing all shots
+	striker0.position = Vector3(-22.0, 0.0, 14.0)
+	striker0.clear_player_order()
+	var hold_test_enemy = null
+	for he in arena.enemy_units:
+		if he.is_alive:
+			hold_test_enemy = he
+			break
+	var enemy_hp_before_hold: int = hold_test_enemy.current_hp if hold_test_enemy != null else 0
+	if hold_test_enemy != null:
+		hold_test_enemy.position = Vector3(-22.0, 0.0, 9.0)
+	arena._unit_cooldowns[striker0.get_instance_id()] = 0.0
+	striker0.set_hold_fire(true)
+	arena.selection_manager.select_unit(striker0, false)
+	var move_goal := Vector3(-22.0, 0.0, 10.0)
+	arena.selection_manager.issue_move_order(move_goal)
+	var s0_before_hold_move: Vector3 = striker0.position
+	arena.step_combat(0.5)
+	check(striker0.position.distance_to(s0_before_hold_move) > 1.2, "Unit under HOLD_FIRE must still obey MOVE orders and relocate")
+	var striker0_shots: int = 0
+	for p in arena.projectile_manager.active_projectiles:
+		if p.get("source", null) == striker0:
+			striker0_shots += 1
+	check(striker0_shots == 0, "Unit under HOLD_FIRE must fire zero projectiles while moving/in combat")
+	if hold_test_enemy != null:
+		check(hold_test_enemy.current_hp == enemy_hp_before_hold, "Enemy must take zero damage from HOLD_FIRE unit")
+	striker0.set_hold_fire(false)
+	striker0.clear_player_order()
+	arena.selection_manager.deselect_all()
+	arena.commander_system.clear_directives()
+
 	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
 	for enemy in arena.enemy_units:
 		if enemy.is_alive:

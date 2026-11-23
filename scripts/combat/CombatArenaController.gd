@@ -79,6 +79,7 @@ var current_room_info: CombatRoomDataScript = null
 var skill_preview_disc: Node3D = null
 var skill_range_ring: Node3D = null
 var tactical_zone_disc: Node3D = null
+var active_zone_discs: Dictionary = {}
 var order_beacon: Node3D = null
 
 var run_finished: bool = false
@@ -124,6 +125,7 @@ func _exit_tree() -> void:
 	if projectile_manager != null:
 		projectile_manager.clear_projectiles()
 	_clear_active_aoes()
+	_clear_active_zone_discs()
 	_unit_flank_memory.clear()
 	if selection_manager != null:
 		selection_manager.selected_units.clear()
@@ -147,26 +149,42 @@ func _unhandled_input(event: InputEvent) -> void:
 				_begin_special_skill_targeting(2)
 			KEY_4:
 				_begin_special_skill_targeting(3)
+			KEY_F1:
+				_select_striker_slot(0, Input.is_key_pressed(KEY_SHIFT))
+			KEY_F2:
+				_select_striker_slot(1, Input.is_key_pressed(KEY_SHIFT))
+			KEY_F3:
+				_select_striker_slot(2, Input.is_key_pressed(KEY_SHIFT))
+			KEY_F4:
+				_select_striker_slot(3, Input.is_key_pressed(KEY_SHIFT))
+			KEY_QUOTELEFT:
+				_select_all_living_strikers()
 			KEY_Z:
 				if commander_system != null:
-					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.ALL_OUT_ASSAULT)
+					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.ASSAULT_ZONE)
+			KEY_V:
+				if commander_system != null:
+					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE)
+			KEY_B:
+				if commander_system != null:
+					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE)
 			KEY_X:
 				if commander_system != null:
-					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.BALANCED_TACTICAL)
-			KEY_V, KEY_H:
-				if commander_system != null:
-					commander_system.set_squad_stance(CommanderDirectiveSystemScript.SquadStance.DEFENSIVE_HOLD)
+					commander_system.cancel_tool()
+			KEY_H:
+				_toggle_hold_fire_for_selection()
 			KEY_TAB:
 				if commander_system != null:
 					commander_system.toggle_tactical_slow_mo()
 			KEY_G:
-				if commander_system != null:
-					commander_system.clear_directives()
+				_clear_directives_for_selection()
 			KEY_C, KEY_HOME:
 				_recenter_camera_on_squad()
 			KEY_ESCAPE:
 				if targeting_overlay != null and targeting_overlay.is_targeting:
 					targeting_overlay.cancel_targeting()
+				elif commander_system != null:
+					commander_system.cancel_tool()
 
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -182,20 +200,29 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 
+		var armed_tool: int = commander_system.active_tool if commander_system != null else CommanderDirectiveSystemScript.ToolMode.NONE
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and Input.is_key_pressed(KEY_SPACE):
 				return
 			if mb.pressed:
 				_is_dragging_box = true
 				_drag_start_pos = mb.position
-				if selection_box_overlay != null:
-					selection_box_overlay.update_commander_markers(mb.position, 24.0, {})
+				if armed_tool == CommanderDirectiveSystemScript.ToolMode.NONE and selection_box_overlay != null:
+					selection_box_overlay.set_drag_rect(true, Rect2(mb.position, Vector2.ZERO))
 			else:
 				if _is_dragging_box:
 					_is_dragging_box = false
-					_finalize_commander_zone_drag(mb.position)
+					if selection_box_overlay != null:
+						selection_box_overlay.set_drag_rect(false, Rect2())
+					if armed_tool != CommanderDirectiveSystemScript.ToolMode.NONE:
+						_finalize_commander_zone_drag(mb.position)
+					else:
+						_finalize_box_selection(mb.position)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
-			_handle_commander_right_click(mb.position)
+			if armed_tool != CommanderDirectiveSystemScript.ToolMode.NONE and commander_system != null:
+				commander_system.cancel_tool()
+			else:
+				_handle_commander_right_click(mb.position)
 
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -215,8 +242,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true, valid_preview)
 			proxy_factory.update_skill_range_ring(skill_range_ring, caster_origin, sk_range, sk_range > 0.0)
 		elif _is_dragging_box:
-			if selection_box_overlay != null:
-				selection_box_overlay.update_commander_markers(_drag_start_pos, maxf(24.0, _drag_start_pos.distance_to(mm.position)), {})
+			var armed_tool: int = commander_system.active_tool if commander_system != null else CommanderDirectiveSystemScript.ToolMode.NONE
+			if armed_tool == CommanderDirectiveSystemScript.ToolMode.NONE and selection_box_overlay != null:
+				selection_box_overlay.set_drag_rect(true, Rect2(_drag_start_pos, mm.position - _drag_start_pos).abs())
 
 ## Starts or restarts a 4-room Roguelike dungeon run.
 func start_run(difficulty: int = 1) -> void:
@@ -570,6 +598,7 @@ func _spawn_persistent_strikers() -> void:
 func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	_clear_enemies()
 	_clear_active_aoes()
+	_clear_active_zone_discs()
 	cover_points.clear()
 	if projectile_manager != null:
 		projectile_manager.clear_projectiles()
@@ -613,6 +642,7 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 			unit.is_alive = unit.current_hp > 0
 		unit.set_meta(&"_prev_hp", unit.current_hp)
 		unit.visible = unit.is_alive
+		unit.is_holding_fire = false
 		unit.has_player_order = false
 		unit.current_order_type = ""
 		unit.order_target_node = null
@@ -779,6 +809,8 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	if striker.has_player_order:
 		if not striker.check_emergency_override():
 			_execute_player_order(striker, delta, cd, eff_range)
+			if striker.is_holding_fire and striker.has_player_order:
+				proxy_factory.update_unit_order_visual(striker, "🚫 " + striker.current_order_type)
 			_apply_unit_separation(striker, delta)
 			return
 
@@ -807,8 +839,24 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 			combat_hud.update_striker_order(striker.unit_data.id, status_tag)
 
 	match action:
-		"EVADE_AOE", "SURVIVAL_RETREAT", "ADVANCE_TO_ZONE":
+		"EVADE_AOE", "SURVIVAL_RETREAT", "ADVANCE_TO_ZONE", "HOLD_DEFENSE_ZONE":
 			_navigate_unit_toward(striker, target_pos, delta)
+		"FREESHOT_BOMBARD":
+			var bomb_pos: Vector3 = (target as CombatUnitScript).position if (target is CombatUnitScript) else target_pos
+			var dist_bomb: float = Vector2(striker.position.x, striker.position.z).distance_to(Vector2(bomb_pos.x, bomb_pos.z))
+			if dist_bomb > eff_range:
+				_navigate_unit_toward(striker, bomb_pos, delta)
+			elif cd <= 0.0 and not striker.is_holding_fire:
+				_fire_freeshot_shell(striker, bomb_pos, uid)
+		"DEFEND_ZONE_ENGAGE":
+			var anchor_dist: float = Vector2(striker.position.x, striker.position.z).distance_to(Vector2(target_pos.x, target_pos.z))
+			if anchor_dist > 0.75:
+				_navigate_unit_toward(striker, target_pos, delta)
+			if target is CombatUnitScript:
+				var d_enemy := target as CombatUnitScript
+				if striker.position.distance_to(d_enemy.position) <= eff_range + 1.5 and has_unit_los(striker, d_enemy):
+					if cd <= 0.0 and not striker.is_holding_fire:
+						_fire_striker_shot(striker, d_enemy, uid)
 		"HEAL_ALLY":
 			if target is CombatUnitScript:
 				var ally := target as CombatUnitScript
@@ -829,7 +877,7 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 				if target is CombatUnitScript:
 					var c_enemy := target as CombatUnitScript
 					if striker.position.distance_to(c_enemy.position) <= eff_range and has_unit_los(striker, c_enemy):
-						if cd <= 0.0:
+						if cd <= 0.0 and not striker.is_holding_fire:
 							_fire_striker_shot(striker, c_enemy, uid)
 					elif commander_system == null or commander_system.current_stance != CommanderDirectiveSystemScript.SquadStance.DEFENSIVE_HOLD:
 						_navigate_unit_toward(striker, c_enemy.position, delta)
@@ -839,7 +887,7 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 				var dist: float = striker.position.distance_to(enemy.position)
 				if dist > eff_range or not has_unit_los(striker, enemy):
 					_navigate_unit_toward(striker, enemy.position, delta)
-				elif cd <= 0.0:
+				elif cd <= 0.0 and not striker.is_holding_fire:
 					_fire_striker_shot(striker, enemy, uid)
 		"POSITION_AND_BUFF":
 			if target is Vector3:
@@ -848,6 +896,8 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	_apply_unit_separation(striker, delta)
 
 func _fire_striker_shot(striker: CombatUnitScript, enemy: CombatUnitScript, uid: int) -> void:
+	if striker.is_holding_fire:
+		return
 	var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
 	var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
 	dmg = maxi(1, int(round(float(dmg) * def_mult)))
@@ -861,6 +911,39 @@ func _fire_striker_shot(striker: CombatUnitScript, enemy: CombatUnitScript, uid:
 		striker.penetration_power,
 		striker.wall_damage
 	)
+	_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
+
+func _fire_freeshot_shell(striker: CombatUnitScript, impact_pos: Vector3, uid: int) -> void:
+	if striker.is_holding_fire:
+		return
+	var splash_rad: float = maxf(2.2, striker.basic_aoe_radius)
+	projectile_manager.spawn_projectile(
+		striker.position + Vector3(0.0, 0.7, 0.0),
+		impact_pos + Vector3(0.0, 0.2, 0.0),
+		20.0,
+		0,
+		striker,
+		null,
+		striker.penetration_power,
+		striker.wall_damage
+	)
+	var hit_any: bool = false
+	for enemy in _get_living_enemies():
+		var eu := enemy as CombatUnitScript
+		if eu == null:
+			continue
+		if Vector2(eu.position.x, eu.position.z).distance_to(Vector2(impact_pos.x, impact_pos.z)) <= splash_rad:
+			var dmg: int = striker.damage_resolver.calculate_damage(striker, eu, card_manager.get_active_buffs())
+			dmg = maxi(1, int(round(float(dmg) * 0.85)))
+			eu.take_damage(dmg, striker)
+			hit_any = true
+	if health_bar_overlay != null:
+		health_bar_overlay.spawn_floating_text(
+			impact_pos + Vector3(0.0, 1.0, 0.0),
+			"💣 SHELL!" if hit_any else "💥",
+			Color(1.0, 0.55, 0.82),
+			hit_any
+		)
 	_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 
 func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, eff_range: float) -> void:
@@ -886,12 +969,12 @@ func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, e
 			var dist: float = striker.position.distance_to(target_enemy.position)
 			if dist > eff_range or not has_unit_los(striker, target_enemy):
 				_navigate_unit_toward(striker, target_enemy.position, delta)
-			elif cd <= 0.0:
+			elif cd <= 0.0 and not striker.is_holding_fire:
 				_fire_striker_shot(striker, target_enemy, uid)
 		"HOLD_POSITION":
 			pass
 		"HOLD_FIRE":
-			pass
+			striker.has_player_order = false
 
 func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	var uid: int = enemy.get_instance_id()
@@ -1040,15 +1123,39 @@ func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: f
 	var side_sign: float = float((mem as Dictionary).get("side", 1.0)) if (mem is Dictionary) else (1.0 if (abs(uid) % 2 == 0) else -1.0)
 
 	var test_angles: Array[float] = [0.0, 0.61 * side_sign, -0.61 * side_sign, 1.13 * side_sign, -1.13 * side_sign, 1.65 * side_sign, -1.65 * side_sign]
+	var moved: bool = false
 	for ang in test_angles:
 		var rot_dir: Vector3 = dir.rotated(Vector3.UP, ang)
 		var cand: Vector3 = unit.position + rot_dir * step
-		if _find_wall_blocking_point(cand, 0.36) == null:
+		if _find_wall_blocking_point(cand, 0.36) == null and not _is_step_blocked_by_peer(unit, cand, 1.05):
 			unit.position = cand
+			moved = true
 			break
+	if not moved:
+		for ang in test_angles:
+			var rot_dir: Vector3 = dir.rotated(Vector3.UP, ang)
+			var cand: Vector3 = unit.position + rot_dir * step
+			if _find_wall_blocking_point(cand, 0.36) == null:
+				unit.position = cand
+				break
 
 	var new_elev: float = float(_get_terrain_mods(unit.position).get("elevation_offset", 0.0))
 	unit.position.y = lerpf(unit.position.y, new_elev, minf(1.0, delta * 10.0))
+
+func _is_step_blocked_by_peer(unit: CombatUnitScript, cand_pos: Vector3, min_sep: float = 1.05) -> bool:
+	var peers: Array = squad_units if (not (unit is EnemyUnitScript)) else enemy_units
+	var cand_xz := Vector2(cand_pos.x, cand_pos.z)
+	var cur_xz := Vector2(unit.position.x, unit.position.z)
+	for other in peers:
+		if other == unit or other == null or not is_instance_valid(other) or not other.is_alive:
+			continue
+		var o_xz := Vector2(other.position.x, other.position.z)
+		var new_d: float = cand_xz.distance_to(o_xz)
+		if new_d < min_sep:
+			var cur_d: float = cur_xz.distance_to(o_xz)
+			if new_d < cur_d:
+				return true
+	return false
 
 func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
 	_navigate_unit_toward(unit, target_pos, delta)
@@ -1059,26 +1166,34 @@ func _apply_unit_separation(unit: CombatUnitScript, delta: float) -> void:
 	var push := Vector3.ZERO
 	var peers: Array = squad_units if (not (unit is EnemyUnitScript)) else enemy_units
 	var uid: int = unit.get_instance_id()
+	var sep_radius: float = 1.35
 	for other in peers:
 		if other == unit or other == null or not is_instance_valid(other) or not other.is_alive:
 			continue
 		var diff := Vector2(unit.position.x - other.position.x, unit.position.z - other.position.z)
 		var d: float = diff.length()
-		if d < 0.95:
+		if d < sep_radius:
 			var sep_dir: Vector2
 			if d > 0.05:
 				sep_dir = diff / d
 			else:
 				var ang: float = float(abs(uid) % 8) * (TAU / 8.0)
 				sep_dir = Vector2(cos(ang), sin(ang))
-			var strength: float = (0.95 - d) / 0.95
+			var strength: float = (sep_radius - d) / sep_radius
 			push.x += sep_dir.x * strength
 			push.z += sep_dir.y * strength
 	if push.is_zero_approx():
 		return
-	var cand: Vector3 = unit.position + push.normalized() * minf(0.45, 2.8 * delta)
+	var push_dir: Vector3 = push.normalized()
+	var push_step: float = minf(0.55, 4.2 * delta)
+	var cand: Vector3 = unit.position + push_dir * push_step
 	if _find_wall_blocking_point(cand, 0.36) == null:
 		unit.position = cand
+	else:
+		var side_sign: float = 1.0 if (abs(uid) % 2 == 0) else -1.0
+		var tan_cand: Vector3 = unit.position + push_dir.rotated(Vector3.UP, PI * 0.5 * side_sign) * (push_step * 0.8)
+		if _find_wall_blocking_point(tan_cand, 0.36) == null:
+			unit.position = tan_cand
 
 func _get_student_bond_level(unit: CombatUnitScript) -> int:
 	if unit == null or unit.unit_data == null:
@@ -1225,8 +1340,19 @@ func _finalize_commander_zone_drag(end_pos: Vector2) -> void:
 	var w_end: Vector3 = _project_to_ground(end_pos, iso_cam)
 	var span: float = Vector2(w_start.x, w_start.z).distance_to(Vector2(w_end.x, w_end.z))
 	var radius: float = 6.5 if span < 2.0 else clampf(span, 4.0, 13.0)
-	commander_system.place_tactical_zone(w_start, radius)
-	_update_status_banner("Chỉ thị Chỉ Huy: Khoanh vùng tác chiến (bán kính %.1fm)" % radius)
+	var ztype: String = "ASSAULT"
+	match commander_system.active_tool:
+		CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE:
+			ztype = "DEFENSE"
+		CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE:
+			ztype = "FREESHOT"
+		_:
+			ztype = "ASSAULT"
+	var target_ids: Array[String] = _get_selected_student_ids()
+	commander_system.create_zone_for_units(ztype, w_start, radius, target_ids)
+	commander_system.cancel_tool()
+	var who_label: String = "TOÀN ĐỘI" if target_ids.is_empty() else ", ".join(target_ids)
+	_update_status_banner("Chỉ thị [%s]: Đặt %s (%.1fm)" % [who_label, ztype, radius])
 
 func _handle_commander_right_click(screen_pos: Vector2) -> void:
 	if commander_system == null:
@@ -1236,18 +1362,185 @@ func _handle_commander_right_click(screen_pos: Vector2) -> void:
 		return
 	var world_pt: Vector3 = _project_to_ground(screen_pos, iso_cam)
 	var click_xz := Vector2(world_pt.x, world_pt.z)
+	var sel_ids: Array[String] = _get_selected_student_ids()
 
 	for enemy in _get_living_enemies():
 		var e := enemy as CombatUnitScript
 		if Vector2(e.position.x, e.position.z).distance_to(click_xz) <= 2.2:
-			commander_system.set_priority_target(e)
-			_update_status_banner("Chỉ thị Chỉ Huy: Đánh dấu Mục Tiêu Trọng Yếu (%s)" % e.name)
+			commander_system.set_target_for_units(e, sel_ids)
+			var scope: String = "TOÀN ĐỘI" if sel_ids.is_empty() else ", ".join(sel_ids)
+			_update_status_banner("Chỉ thị [%s]: Mục tiêu ưu tiên (%s)" % [scope, e.name])
 			return
+
+	if selection_manager != null and not selection_manager.selected_units.is_empty():
+		selection_manager.issue_move_order(world_pt)
+		proxy_factory.update_order_beacon(order_beacon, world_pt, Color(0.2, 0.9, 1.0, 0.45), true)
+		_update_status_banner("Chỉ thị [%s]: Di chuyển đến điểm chỉ định" % ", ".join(sel_ids))
+		return
 
 	var origin_centroid: Vector3 = _get_squad_centroid()
 	commander_system.set_advance_vector(origin_centroid, world_pt)
 	proxy_factory.update_order_beacon(order_beacon, world_pt, Color(0.25, 0.92, 1.0, 0.55), true)
 	_update_status_banner("Chỉ thị Chỉ Huy: Tiến quân theo hướng chỉ định")
+
+func _get_selected_student_ids() -> Array[String]:
+	var ids: Array[String] = []
+	if selection_manager == null:
+		return ids
+	for u in selection_manager.selected_units:
+		if u is CombatUnitScript:
+			var cu := u as CombatUnitScript
+			if cu.is_alive:
+				var sid: String = cu.unit_data.id if cu.unit_data != null else str(cu.name)
+				if not sid.is_empty() and not ids.has(sid):
+					ids.append(sid)
+	return ids
+
+func _get_targeted_strikers() -> Array[CombatUnitScript]:
+	var out: Array[CombatUnitScript] = []
+	if selection_manager != null and not selection_manager.selected_units.is_empty():
+		for u in selection_manager.selected_units:
+			if u is CombatUnitScript and (u as CombatUnitScript).is_alive:
+				out.append(u as CombatUnitScript)
+	if out.is_empty():
+		for s in _get_living_strikers():
+			out.append(s as CombatUnitScript)
+	return out
+
+func _select_striker_slot(slot_idx: int, additive: bool = false) -> void:
+	if selection_manager == null or slot_idx < 0 or slot_idx >= squad_units.size():
+		return
+	var u: CombatUnitScript = squad_units[slot_idx]
+	if u != null and is_instance_valid(u) and u.is_alive:
+		selection_manager.select_unit(u, additive)
+
+func _select_all_living_strikers() -> void:
+	if selection_manager == null:
+		return
+	selection_manager.deselect_all()
+	for s in _get_living_strikers():
+		selection_manager.select_unit(s, true)
+
+func _on_striker_portrait_clicked(student_id: String) -> void:
+	if selection_manager == null:
+		return
+	var additive: bool = Input.is_key_pressed(KEY_SHIFT)
+	for s in squad_units:
+		if s != null and is_instance_valid(s) and s.is_alive:
+			var sid: String = s.unit_data.id if s.unit_data != null else str(s.name)
+			if sid == student_id:
+				selection_manager.select_unit(s, additive)
+				return
+
+func _toggle_hold_fire_for_selection() -> void:
+	var targets: Array[CombatUnitScript] = _get_targeted_strikers()
+	if targets.is_empty():
+		return
+	var any_not_holding: bool = false
+	for u in targets:
+		if not u.is_holding_fire:
+			any_not_holding = true
+			break
+	for u in targets:
+		u.set_hold_fire(any_not_holding)
+		var tag: String = "🚫 GIỮ HỎA LỰC" if any_not_holding else ""
+		proxy_factory.update_unit_order_visual(u, tag)
+		if combat_hud != null and u.unit_data != null:
+			combat_hud.update_striker_order(u.unit_data.id, tag)
+	_update_status_banner("Giữ Hỏa Lực (%s): %s" % ["BẬT" if any_not_holding else "TẮT", ", ".join(_get_selected_student_ids()) if not _get_selected_student_ids().is_empty() else "TOÀN ĐỘI"])
+
+func _clear_directives_for_selection() -> void:
+	var sel_ids: Array[String] = _get_selected_student_ids()
+	if commander_system != null:
+		commander_system.clear_directives_for_units(sel_ids)
+	for u in _get_targeted_strikers():
+		u.set_hold_fire(false)
+		u.clear_player_order()
+		proxy_factory.update_unit_order_visual(u, "")
+		if combat_hud != null and u.unit_data != null:
+			combat_hud.update_striker_order(u.unit_data.id, "")
+	_update_status_banner("Đã hủy chỉ thị: %s" % (", ".join(sel_ids) if not sel_ids.is_empty() else "TOÀN ĐỘI"))
+
+func _on_commander_tool_clicked(tool_id: String) -> void:
+	if commander_system == null:
+		return
+	match tool_id:
+		"ASSAULT":
+			commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.ASSAULT_ZONE)
+		"DEFENSE":
+			commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE)
+		"FREESHOT":
+			commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE)
+		"HOLD_FIRE":
+			_toggle_hold_fire_for_selection()
+		"CLEAR":
+			_clear_directives_for_selection()
+
+func _on_commander_tool_changed(new_tool: int, _tool_name: String) -> void:
+	if combat_hud == null:
+		return
+	match new_tool:
+		CommanderDirectiveSystemScript.ToolMode.ASSAULT_ZONE:
+			combat_hud.set_active_commander_tool("ASSAULT")
+		CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE:
+			combat_hud.set_active_commander_tool("DEFENSE")
+		CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE:
+			combat_hud.set_active_commander_tool("FREESHOT")
+		_:
+			combat_hud.set_active_commander_tool("NONE")
+
+func _on_commander_zones_updated(_zones: Array) -> void:
+	_sync_tactical_zone_discs()
+
+func _clear_active_zone_discs() -> void:
+	for zid in active_zone_discs:
+		var disc: Variant = active_zone_discs[zid]
+		if disc is Node and is_instance_valid(disc):
+			var n := disc as Node
+			if n.get_parent() != null:
+				n.get_parent().remove_child(n)
+			n.free()
+	active_zone_discs.clear()
+	if tactical_zone_disc != null and is_instance_valid(tactical_zone_disc):
+		tactical_zone_disc.visible = false
+
+func _sync_tactical_zone_discs() -> void:
+	if commander_system == null:
+		return
+	var zones: Array[Dictionary] = commander_system.active_zones
+	if zones.is_empty():
+		_clear_active_zone_discs()
+		return
+
+	if tactical_zone_disc != null and is_instance_valid(tactical_zone_disc):
+		proxy_factory.update_tactical_zone_visual(tactical_zone_disc, zones[0], true)
+
+	var keep_ids: Array[int] = []
+	for i: int in range(1, zones.size()):
+		var zd: Dictionary = zones[i]
+		var zid: int = int(zd.get("id", -1))
+		keep_ids.append(zid)
+		var disc_node: Node3D = active_zone_discs.get(zid, null) as Node3D
+		if disc_node == null or not is_instance_valid(disc_node):
+			disc_node = proxy_factory.create_tactical_zone_disc()
+			disc_node.name = "TacticalZoneDisc_%d" % zid
+			if effects_container != null:
+				effects_container.add_child(disc_node)
+			active_zone_discs[zid] = disc_node
+		proxy_factory.update_tactical_zone_visual(disc_node, zd, true)
+
+	var stale_ids: Array = []
+	for existing_id in active_zone_discs:
+		if not keep_ids.has(int(existing_id)):
+			stale_ids.append(existing_id)
+	for sid_key in stale_ids:
+		var stale: Variant = active_zone_discs[sid_key]
+		if stale is Node and is_instance_valid(stale):
+			var sn := stale as Node
+			if sn.get_parent() != null:
+				sn.get_parent().remove_child(sn)
+			sn.free()
+		active_zone_discs.erase(sid_key)
 
 func _get_squad_centroid() -> Vector3:
 	var living: Array = _get_living_strikers()
@@ -1311,6 +1604,9 @@ func _on_order_issued(order_type: String, units: Array[Node3D]) -> void:
 	for u in units:
 		if u is CombatUnitScript:
 			var cu := u as CombatUnitScript
+			if order_type == "HOLD_FIRE":
+				cu.is_holding_fire = true
+				cu.has_player_order = false
 			proxy_factory.update_unit_order_visual(cu, order_type)
 			if combat_hud != null and cu.unit_data != null:
 				combat_hud.update_striker_order(cu.unit_data.id, order_type)
@@ -1330,21 +1626,16 @@ func _on_order_issued(order_type: String, units: Array[Node3D]) -> void:
 
 func _on_striker_order_completed(u: CombatUnitScript) -> void:
 	if u != null and is_instance_valid(u):
-		proxy_factory.update_unit_order_visual(u, "")
+		var restored_tag: String = "🚫 GIỮ HỎA LỰC" if u.is_holding_fire else ""
+		proxy_factory.update_unit_order_visual(u, restored_tag)
 		if combat_hud != null and u.unit_data != null:
-			combat_hud.update_striker_order(u.unit_data.id, "")
+			combat_hud.update_striker_order(u.unit_data.id, restored_tag)
 	_refresh_target_reticles()
 	_update_tactical_2d_overlay()
 
 func _on_directive_changed(summary_text: String) -> void:
+	_sync_tactical_zone_discs()
 	if commander_system != null:
-		proxy_factory.update_tactical_zone_disc(
-			tactical_zone_disc,
-			commander_system.tactical_zone_center,
-			commander_system.tactical_zone_radius,
-			commander_system.current_stance,
-			commander_system.has_tactical_zone
-		)
 		if not commander_system.has_advance_vector and order_beacon != null:
 			proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
 	if combat_hud != null and not summary_text.is_empty():
@@ -1367,6 +1658,10 @@ func _refresh_target_reticles() -> void:
 		var prio: Node3D = commander_system.get_valid_priority_target()
 		if prio != null and not focused_enemies.has(prio):
 			focused_enemies.append(prio)
+		for uid_key: String in commander_system.unit_target_map.keys():
+			var ut: Node3D = commander_system.get_target_for_unit(uid_key)
+			if ut != null and not focused_enemies.has(ut):
+				focused_enemies.append(ut)
 
 	for e in enemy_units:
 		if e != null and is_instance_valid(e):
@@ -1376,14 +1671,7 @@ func _update_tactical_2d_overlay() -> void:
 	var iso_cam := _get_isometric_camera()
 	var has_cam: bool = iso_cam != null and is_instance_valid(iso_cam) and iso_cam.is_inside_tree()
 
-	if commander_system != null:
-		proxy_factory.update_tactical_zone_disc(
-			tactical_zone_disc,
-			commander_system.tactical_zone_center,
-			commander_system.tactical_zone_radius,
-			commander_system.current_stance,
-			commander_system.has_tactical_zone
-		)
+	_sync_tactical_zone_discs()
 
 	if selection_box_overlay != null:
 		var settings_mgr := get_node_or_null("/root/SettingsManager")
@@ -1391,16 +1679,7 @@ func _update_tactical_2d_overlay() -> void:
 			selection_box_overlay.show_group_frame = bool(settings_mgr.get("show_group_frame"))
 
 		if not _is_dragging_box:
-			var z_scr := Vector2.ZERO
-			var z_rad_px: float = 0.0
 			var arrow_info: Dictionary = {}
-			if has_cam and commander_system != null and commander_system.has_tactical_zone:
-				var zc: Vector3 = commander_system.tactical_zone_center
-				if not iso_cam.is_position_behind(zc):
-					z_scr = iso_cam.unproject_position(zc)
-					var z_edge: Vector3 = zc + Vector3(commander_system.tactical_zone_radius, 0.0, 0.0)
-					if not iso_cam.is_position_behind(z_edge):
-						z_rad_px = clampf(z_scr.distance_to(iso_cam.unproject_position(z_edge)), 20.0, 400.0)
 			if has_cam and commander_system != null and commander_system.has_advance_vector:
 				if not iso_cam.is_position_behind(commander_system.advance_origin) and not iso_cam.is_position_behind(commander_system.advance_target):
 					arrow_info = {
@@ -1409,7 +1688,7 @@ func _update_tactical_2d_overlay() -> void:
 						"to": iso_cam.unproject_position(commander_system.advance_target),
 						"color": Color(1.0, 0.85, 0.22, 0.90),
 					}
-			selection_box_overlay.update_commander_markers(z_scr, z_rad_px, arrow_info)
+			selection_box_overlay.update_commander_markers(Vector2.ZERO, 0.0, arrow_info)
 
 		var screen_pts: Array[Vector2] = []
 		var order_lines: Array[Dictionary] = []
@@ -1674,6 +1953,15 @@ func _connect_signals() -> void:
 			commander_system.directive_changed.connect(_on_directive_changed)
 		if not commander_system.priority_target_changed.is_connected(_on_priority_target_changed):
 			commander_system.priority_target_changed.connect(_on_priority_target_changed)
+		if not commander_system.tool_changed.is_connected(_on_commander_tool_changed):
+			commander_system.tool_changed.connect(_on_commander_tool_changed)
+		if not commander_system.zones_updated.is_connected(_on_commander_zones_updated):
+			commander_system.zones_updated.connect(_on_commander_zones_updated)
+	if combat_hud != null:
+		if not combat_hud.commander_tool_clicked.is_connected(_on_commander_tool_clicked):
+			combat_hud.commander_tool_clicked.connect(_on_commander_tool_clicked)
+		if not combat_hud.striker_portrait_clicked.is_connected(_on_striker_portrait_clicked):
+			combat_hud.striker_portrait_clicked.connect(_on_striker_portrait_clicked)
 
 	if card_draft_panel != null:
 		for i in range(3):
@@ -1719,6 +2007,15 @@ func _disconnect_signals() -> void:
 			commander_system.directive_changed.disconnect(_on_directive_changed)
 		if commander_system.priority_target_changed.is_connected(_on_priority_target_changed):
 			commander_system.priority_target_changed.disconnect(_on_priority_target_changed)
+		if commander_system.tool_changed.is_connected(_on_commander_tool_changed):
+			commander_system.tool_changed.disconnect(_on_commander_tool_changed)
+		if commander_system.zones_updated.is_connected(_on_commander_zones_updated):
+			commander_system.zones_updated.disconnect(_on_commander_zones_updated)
+	if combat_hud != null and is_instance_valid(combat_hud):
+		if combat_hud.commander_tool_clicked.is_connected(_on_commander_tool_clicked):
+			combat_hud.commander_tool_clicked.disconnect(_on_commander_tool_clicked)
+		if combat_hud.striker_portrait_clicked.is_connected(_on_striker_portrait_clicked):
+			combat_hud.striker_portrait_clicked.disconnect(_on_striker_portrait_clicked)
 
 	if card_draft_panel != null and is_instance_valid(card_draft_panel):
 		for i in range(3):

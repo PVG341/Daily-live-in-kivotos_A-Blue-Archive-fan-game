@@ -290,6 +290,13 @@ func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
 			beam_color = Color(0.75, 0.85, 1.0, 0.18)
 			icon_text = "⚔️ AUTO"
 			show_beam = false
+		"💣 BẮN PHÁ VÙNG":
+			beam_color = Color(1.0, 0.28, 0.72, 0.42)
+		"🛡️ VÀO VÙNG PHÒNG THỦ", "🛡️ PHÒNG THỦ & BẮN", "🛡️ GIỮ VỊ TRÍ":
+			beam_color = Color(0.22, 0.92, 0.52, 0.36)
+		_:
+			if order_type.begins_with("🚫 "):
+				beam_color = Color(0.60, 0.42, 1.0, 0.42)
 
 	var beam := pillar.get_node_or_null("LightBeam") as MeshInstance3D
 	if beam != null:
@@ -366,33 +373,91 @@ func create_tactical_zone_disc() -> Node3D:
 	ring.mesh = r_mesh
 	ring.position = Vector3(0.0, 0.05, 0.0)
 	root.add_child(ring)
+
+	var cross := MeshInstance3D.new()
+	cross.name = "InnerCrosshairMesh"
+	var c_mesh := TorusMesh.new()
+	c_mesh.inner_radius = 0.22
+	c_mesh.outer_radius = 0.27
+	var c_mat := StandardMaterial3D.new()
+	c_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	c_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	c_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.55)
+	c_mesh.material = c_mat
+	cross.mesh = c_mesh
+	cross.position = Vector3(0.0, 0.055, 0.0)
+	root.add_child(cross)
+
+	var label := Label3D.new()
+	label.name = "ZoneTitleLabel"
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.font_size = 24
+	label.outline_size = 6
+	label.position = Vector3(0.0, 0.72, 0.0)
+	root.add_child(label)
 	return root
 
-## Positions, scales, and colors the 3D Commander tactical command zone based on active stance.
-func update_tactical_zone_disc(disc: Node3D, center: Vector3, radius: float, stance: int, visible_state: bool) -> void:
+## Positions, scales, and colors a 3D Commander tactical command zone from zone dictionary metadata.
+func update_tactical_zone_visual(disc: Node3D, zone_data: Dictionary, visible_state: bool) -> void:
 	if disc == null or not is_instance_valid(disc):
 		return
 	disc.visible = visible_state
 	if not visible_state:
 		return
-	var r: float = maxf(1.0, radius)
+	var center: Vector3 = zone_data.get("center", Vector3.ZERO)
+	var r: float = maxf(1.0, float(zone_data.get("radius", 6.5)))
+	var ztype: String = str(zone_data.get("type", "ASSAULT")).to_upper()
+	var assigned: Array = zone_data.get("assigned_unit_ids", ["*"])
+
 	disc.position = Vector3(center.x, center.y, center.z)
-	disc.scale = Vector3(r, 1.0, r)
-	var base_col := Color(0.20, 0.88, 1.0)
-	if stance == 0:
-		base_col = Color(1.0, 0.42, 0.18)
-	elif stance == 2:
+	disc.scale = Vector3.ONE
+
+	var base_col := Color(1.0, 0.45, 0.18)
+	var title_txt := "⚔️ GIAO TRANH"
+	if ztype == "DEFENSE":
 		base_col = Color(0.22, 0.92, 0.52)
+		title_txt = "🛡️ PHÒNG THỦ"
+	elif ztype == "FREESHOT":
+		base_col = Color(1.0, 0.28, 0.72)
+		title_txt = "💣 FREESHOT"
+
 	var fill_mesh := disc.get_node_or_null("ZoneFillMesh") as MeshInstance3D
-	if fill_mesh != null and fill_mesh.mesh is CylinderMesh:
-		var cm := fill_mesh.mesh as CylinderMesh
-		if cm.material is StandardMaterial3D:
-			(cm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.18)
+	if fill_mesh != null:
+		fill_mesh.scale = Vector3(r, 1.0, r)
+		if fill_mesh.mesh is CylinderMesh:
+			var cm := fill_mesh.mesh as CylinderMesh
+			if cm.material is StandardMaterial3D:
+				(cm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.18)
 	var ring_mesh := disc.get_node_or_null("ZoneRingMesh") as MeshInstance3D
-	if ring_mesh != null and ring_mesh.mesh is TorusMesh:
-		var tm := ring_mesh.mesh as TorusMesh
-		if tm.material is StandardMaterial3D:
-			(tm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.78)
+	if ring_mesh != null:
+		ring_mesh.scale = Vector3(r, 1.0, r)
+		if ring_mesh.mesh is TorusMesh:
+			var tm := ring_mesh.mesh as TorusMesh
+			if tm.material is StandardMaterial3D:
+				(tm.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.82)
+	var cross_mesh := disc.get_node_or_null("InnerCrosshairMesh") as MeshInstance3D
+	if cross_mesh != null:
+		cross_mesh.scale = Vector3(r * 0.65, 1.0, r * 0.65)
+		if cross_mesh.mesh is TorusMesh:
+			var cm2 := cross_mesh.mesh as TorusMesh
+			if cm2.material is StandardMaterial3D:
+				(cm2.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.55)
+	var lbl := disc.get_node_or_null("ZoneTitleLabel") as Label3D
+	if lbl != null:
+		var who_str: String = "TOÀN ĐỘI" if (assigned.is_empty() or assigned.has("*")) else ", ".join(assigned)
+		lbl.text = "%s (%.0fm)\n[%s]" % [title_txt, r, who_str]
+		lbl.modulate = Color(base_col.r, base_col.g, base_col.b, 1.0)
+
+## Positions, scales, and colors the 3D Commander tactical command zone based on active stance.
+func update_tactical_zone_disc(disc: Node3D, center: Vector3, radius: float, stance: int, visible_state: bool) -> void:
+	var ztype: String = "DEFENSE" if stance == 2 else "ASSAULT"
+	update_tactical_zone_visual(disc, {
+		"type": ztype,
+		"center": center,
+		"radius": radius,
+		"assigned_unit_ids": ["*"],
+	}, visible_state)
 
 ## Creates a 3D ground ring displaying maximum cast_range while targeting an EX-Skill.
 func create_skill_range_ring() -> Node3D:

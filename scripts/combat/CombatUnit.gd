@@ -18,6 +18,9 @@ var attack_range: float = 10.0
 var penetration_power: int = 0
 var wall_damage: int = 18
 var is_alive: bool = true
+var is_holding_fire: bool = false
+var is_aoe_attacker: bool = false
+var basic_aoe_radius: float = 2.6
 
 var has_player_order: bool = false
 var current_order_type: String = ""
@@ -41,6 +44,7 @@ func setup(data: StudentData) -> void:
 	speed = data.base_speed
 	attack_range = data.attack_range
 	is_alive = true
+	is_holding_fire = false
 	has_player_order = false
 	current_order_type = ""
 	order_target_position = Vector3.ZERO
@@ -81,6 +85,7 @@ func die() -> void:
 	if not is_alive:
 		return
 	is_alive = false
+	is_holding_fire = false
 	has_player_order = false
 	current_order_type = ""
 	order_target_node = null
@@ -120,6 +125,7 @@ func receive_cover_order(cover_point: Node3D) -> void:
 
 ## Receives a FOCUS_FIRE order dispatched by UnitSelectionManager.
 func receive_focus_fire(enemy: Node3D) -> void:
+	is_holding_fire = false
 	has_player_order = true
 	current_order_type = "FOCUS_FIRE"
 	order_target_node = enemy
@@ -130,8 +136,18 @@ func receive_hold_position() -> void:
 	current_order_type = "HOLD_POSITION"
 	order_target_node = null
 
-## Receives a HOLD_FIRE order dispatched by UnitSelectionManager.
+## Receives a non-blocking HOLD_FIRE stance: prevents firing without locking movement.
 func receive_hold_fire() -> void:
-	has_player_order = true
+	is_holding_fire = true
+	has_player_order = false
 	current_order_type = "HOLD_FIRE"
 	order_target_node = null
+
+## Explicitly sets non-blocking Hold Fire mode (movement and zone orders still apply).
+func set_hold_fire(enabled: bool) -> void:
+	is_holding_fire = enabled
+
+## Toggles non-blocking Hold Fire mode and returns the new state.
+func toggle_hold_fire() -> bool:
+	is_holding_fire = not is_holding_fire
+	return is_holding_fire
