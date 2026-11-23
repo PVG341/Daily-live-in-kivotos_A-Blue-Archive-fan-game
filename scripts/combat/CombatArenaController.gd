@@ -26,6 +26,7 @@ const CombatHUDScript := preload("res://scripts/ui/CombatHUD.gd")
 const SkillTargetingOverlayScript := preload("res://scripts/combat/SkillTargetingOverlay.gd")
 const SelectionBoxOverlayScript := preload("res://scripts/combat/SelectionBoxOverlay.gd")
 const CombatRoomDataScript := preload("res://scripts/combat/CombatRoomData.gd")
+const CombatHealthBarOverlayScript := preload("res://scripts/combat/CombatHealthBarOverlay.gd")
 
 const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
@@ -54,6 +55,7 @@ var combat_hud: CombatHUDScript = null
 var card_draft_panel: PanelContainer = null
 var targeting_overlay: SkillTargetingOverlayScript = null
 var selection_box_overlay: SelectionBoxOverlayScript = null
+var health_bar_overlay: CombatHealthBarOverlayScript = null
 var status_banner: Label = null
 var result_panel: PanelContainer = null
 
@@ -71,6 +73,7 @@ var current_draft_cards: Array[Dictionary] = []
 
 var current_room_info: CombatRoomDataScript = null
 var skill_preview_disc: Node3D = null
+var skill_range_ring: Node3D = null
 var order_beacon: Node3D = null
 
 var run_finished: bool = false
@@ -98,6 +101,8 @@ func _ready() -> void:
 	if effects_container != null:
 		skill_preview_disc = proxy_factory.create_skill_preview_disc()
 		effects_container.add_child(skill_preview_disc)
+		skill_range_ring = proxy_factory.create_skill_range_ring()
+		effects_container.add_child(skill_range_ring)
 		order_beacon = proxy_factory.create_order_beacon()
 		effects_container.add_child(order_beacon)
 	_connect_signals()
@@ -133,6 +138,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_G:
 				if selection_manager != null:
 					selection_manager.issue_hold_fire()
+			KEY_C, KEY_HOME:
+				_recenter_camera_on_squad()
 			KEY_ESCAPE:
 				if targeting_overlay != null and targeting_overlay.is_targeting:
 					targeting_overlay.cancel_targeting()
@@ -141,6 +148,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if targeting_overlay != null and targeting_overlay.is_targeting:
 			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+				targeting_overlay.set_caster_origin(_get_skill_caster_origin())
 				var iso_cam := _get_isometric_camera()
 				targeting_overlay.confirm_target(mb.position, iso_cam, 0.0)
 				get_viewport().set_input_as_handled()
@@ -151,6 +159,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 
 		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed and Input.is_key_pressed(KEY_SPACE):
+				return
 			if mb.pressed:
 				_is_dragging_box = true
 				_drag_start_pos = mb.position
@@ -168,9 +178,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if targeting_overlay != null and targeting_overlay.is_targeting:
+			var caster_origin: Vector3 = _get_skill_caster_origin()
+			targeting_overlay.set_caster_origin(caster_origin)
 			var wpos: Vector3 = targeting_overlay.update_preview(mm.position, _get_isometric_camera(), 0.0)
 			var sk_rad: float = targeting_overlay.active_skill.aoe_radius if targeting_overlay.active_skill != null else 4.0
-			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true)
+			var sk_range: float = targeting_overlay.active_skill.cast_range if targeting_overlay.active_skill != null else 0.0
+			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true, targeting_overlay.is_target_in_range_flag)
+			proxy_factory.update_skill_range_ring(skill_range_ring, caster_origin, sk_range, sk_range > 0.0)
 		elif _is_dragging_box:
 			if selection_box_overlay != null and selection_manager != null:
 				var rect: Rect2 = selection_manager.selection_math.normalize_selection_rect(_drag_start_pos, mm.position)
@@ -184,6 +198,8 @@ func start_run(difficulty: int = 1) -> void:
 	if combat_hud != null:
 		combat_hud.clear_hud()
 		combat_hud.set_active_buff_ids([])
+	if health_bar_overlay != null:
+		health_bar_overlay.clear_all()
 	if result_panel != null:
 		result_panel.visible = false
 	if card_draft_panel != null:
@@ -275,6 +291,8 @@ func step_combat(delta: float) -> void:
 				_resolve_random_event(evt)
 
 	# 7. Sync HUD, tactical 2D overlay & check defeat
+	if health_bar_overlay != null:
+		health_bar_overlay.tick_floating_numbers(delta, _get_isometric_camera())
 	_refresh_all_unit_labels()
 	_update_tactical_2d_overlay()
 	if _get_living_strikers().is_empty() and not squad_units.is_empty():
@@ -362,6 +380,14 @@ func _resolve_scene_nodes() -> void:
 		card_draft_panel = ui_layer.get_node_or_null("RoguelikeCardDraft") as PanelContainer
 		targeting_overlay = ui_layer.get_node_or_null("SkillTargetingOverlay") as SkillTargetingOverlayScript
 		selection_box_overlay = ui_layer.get_node_or_null("SelectionBoxOverlay") as SelectionBoxOverlayScript
+		health_bar_overlay = ui_layer.get_node_or_null("CombatHealthBarOverlay") as CombatHealthBarOverlayScript
+		if health_bar_overlay == null:
+			health_bar_overlay = CombatHealthBarOverlayScript.new()
+			health_bar_overlay.name = "CombatHealthBarOverlay"
+			health_bar_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			health_bar_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			ui_layer.add_child(health_bar_overlay)
+			ui_layer.move_child(health_bar_overlay, 0)
 		status_banner = ui_layer.get_node_or_null("StatusBanner") as Label
 		result_panel = ui_layer.get_node_or_null("ResultPanel") as PanelContainer
 
@@ -382,6 +408,9 @@ func _setup_default_squad() -> void:
 	sk_missile.cost = 3
 	sk_missile.cooldown = 6.0
 	sk_missile.aoe_radius = 4.5
+	sk_missile.cast_range = 24.0
+	sk_missile.min_range = 2.0
+	sk_missile.aoe_shape = "CIRCLE"
 	sk_missile.effect_type = "DAMAGE"
 
 	var sp_hibiki := StudentData.new()
@@ -396,6 +425,9 @@ func _setup_default_squad() -> void:
 	sk_heal.cost = 4
 	sk_heal.cooldown = 8.0
 	sk_heal.aoe_radius = 6.0
+	sk_heal.cast_range = 18.0
+	sk_heal.min_range = 0.0
+	sk_heal.aoe_shape = "CIRCLE"
 	sk_heal.effect_type = "HEAL"
 
 	var sp_serina := StudentData.new()
@@ -421,6 +453,7 @@ func _populate_special_skill_buttons() -> void:
 		var sk := ex_skill_system.registered_skills[i]
 		var btn := Button.new()
 		btn.text = "[%d] %s" % [i + 1, sk.name]
+		btn.focus_mode = Control.FOCUS_NONE
 		var idx: int = i
 		btn.pressed.connect(func() -> void: _begin_special_skill_targeting(idx))
 		btn_box.add_child(btn)
@@ -458,7 +491,8 @@ func _spawn_persistent_strikers() -> void:
 		unit.setup(sd)
 		unit.order_completed.connect(_on_striker_order_completed)
 		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0, sd.attack_range)
-		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp)
+		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp, false)
+		_bind_unit_hp_feedback(unit)
 		units_container.add_child(unit)
 		squad_units.append(unit)
 		initial_hp_map[sd.id] = unit.current_hp
@@ -473,6 +507,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		projectile_manager.clear_projectiles()
 	if selection_manager != null:
 		selection_manager.deselect_all()
+	if health_bar_overlay != null:
+		health_bar_overlay.clear_all()
 
 	room_elapsed_time = 0.0
 	_boss_aoe_timer = 2.5
@@ -498,6 +534,7 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		if unit.unit_data != null and persisted_hp.has(unit.unit_data.id):
 			unit.current_hp = clampi(int(persisted_hp[unit.unit_data.id]), 0, unit.max_hp)
 			unit.is_alive = unit.current_hp > 0
+		unit.set_meta(&"_prev_hp", unit.current_hp)
 		unit.visible = unit.is_alive
 		unit.has_player_order = false
 		unit.current_order_type = ""
@@ -508,12 +545,13 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 			unit.position = Vector3(-4.5 + float(i) * 3.0, 0.0, 20.0)
 		proxy_factory.set_unit_selected(unit, false)
 		proxy_factory.update_unit_order_visual(unit, "")
-		proxy_factory.update_unit_hp_label(unit, unit.name, unit.current_hp, unit.max_hp)
+		proxy_factory.update_unit_hp_label(unit, unit.name, unit.current_hp, unit.max_hp, false)
 		if combat_hud != null and unit.unit_data != null:
 			combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
 			combat_hud.update_striker_order(unit.unit_data.id, "")
 
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
+	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
 	if selection_box_overlay != null:
 		selection_box_overlay.update_tactical_markers([], [])
@@ -552,7 +590,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		boss.attack_range = 13.0
 		boss.position = room_info.get_boss_spawn_position() if room_info != null else Vector3(0.0, 0.0, -9.5)
 		proxy_factory.attach_unit_visuals(boss, "BOSS", Color(0.75, 0.15, 0.2), Color(1.0, 0.2, 0.2), 1.65)
-		proxy_factory.update_unit_hp_label(boss, "BOSS", boss.current_hp, boss.max_hp)
+		proxy_factory.update_unit_hp_label(boss, "BOSS", boss.current_hp, boss.max_hp, true)
+		_bind_unit_hp_feedback(boss)
 		boss.unit_died.connect(_on_enemy_died)
 		boss.phase_changed.connect(func(new_phase: int) -> void:
 			_update_status_banner("BOSS PHASE %d! Watch the red AoE zones!" % new_phase)
@@ -579,7 +618,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		var scale_f: float = 1.2 if room_type == "ELITE" else 0.95
 		var col: Color = Color(0.6, 0.25, 0.85) if room_type == "ELITE" else Color(0.45, 0.45, 0.52)
 		proxy_factory.attach_unit_visuals(grunt, grunt.name, col, Color(1.0, 0.4, 0.3), scale_f)
-		proxy_factory.update_unit_hp_label(grunt, grunt.name, grunt.current_hp, grunt.max_hp)
+		proxy_factory.update_unit_hp_label(grunt, grunt.name, grunt.current_hp, grunt.max_hp, true)
+		_bind_unit_hp_feedback(grunt)
 		grunt.unit_died.connect(_on_enemy_died)
 		enemies_container.add_child(grunt)
 		enemy_units.append(grunt)
@@ -587,6 +627,7 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	wave_spawner.start_wave(room_index + 1, enemy_units.size())
 	if combat_hud != null:
 		combat_hud.update_wave(room_index + 1)
+	_update_tactical_2d_overlay()
 
 func _on_enemy_died(unit: CombatUnitScript) -> void:
 	if unit != null and is_instance_valid(unit):
@@ -826,33 +867,38 @@ func _begin_special_skill_targeting(skill_index: int) -> void:
 		return
 	var sk := ex_skill_system.registered_skills[skill_index]
 	if ex_skill_system.cost_bar.current_cost >= float(sk.cost) and not ex_skill_system.is_skill_on_cooldown(sk):
+		var origin: Vector3 = _get_skill_caster_origin()
+		targeting_overlay.set_caster_origin(origin)
 		targeting_overlay.begin_targeting(sk)
-		_update_status_banner("Targeting EX Skill: %s (Left-Click ground)" % sk.name)
+		proxy_factory.update_skill_range_ring(skill_range_ring, origin, sk.cast_range, sk.cast_range > 0.0)
+		_update_status_banner("Targeting EX Skill: %s | Range: %.0fm (Left-Click ground)" % [sk.name, sk.cast_range])
 
 func _on_ex_target_confirmed(skill: SkillData, world_pos: Vector3) -> void:
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
+	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	if skill == null or ex_skill_system == null:
 		return
 	ex_skill_system.activate_skill(skill, world_pos)
 
 func _on_ex_target_cancelled() -> void:
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
+	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	_update_status_banner("EX Skill Cancelled")
 
 func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 	if skill == null:
 		return
-	var center_xz := Vector2(target_pos.x, target_pos.z)
+	var caster_origin: Vector3 = _get_skill_caster_origin()
 	if skill.effect_type == "HEAL":
 		for unit in _get_living_strikers():
 			var s := unit as CombatUnitScript
-			if Vector2(s.position.x, s.position.z).distance_to(center_xz) <= skill.aoe_radius:
+			if skill.is_point_inside_aoe(caster_origin, target_pos, s.position):
 				s.heal(450)
 		_update_status_banner("EX Skill Cast: %s (Healed allies!)" % skill.name)
 	else:
 		for unit in _get_living_enemies():
 			var e := unit as CombatUnitScript
-			if Vector2(e.position.x, e.position.z).distance_to(center_xz) <= skill.aoe_radius:
+			if skill.is_point_inside_aoe(caster_origin, target_pos, e.position):
 				e.take_damage(650, self)
 		_update_status_banner("EX Skill Cast: %s!" % skill.name)
 
@@ -945,44 +991,92 @@ func _refresh_target_reticles() -> void:
 			proxy_factory.set_unit_targeted(e, e.is_alive and focused_enemies.has(e))
 
 func _update_tactical_2d_overlay() -> void:
-	if selection_box_overlay == null:
-		return
 	var iso_cam := _get_isometric_camera()
-	if iso_cam == null or not iso_cam.is_inside_tree():
-		return
+	var has_cam: bool = iso_cam != null and is_instance_valid(iso_cam) and iso_cam.is_inside_tree()
 
-	var screen_pts: Array[Vector2] = []
-	var order_lines: Array[Dictionary] = []
+	if selection_box_overlay != null:
+		var settings_mgr := get_node_or_null("/root/SettingsManager")
+		if settings_mgr != null and &"show_group_frame" in settings_mgr:
+			selection_box_overlay.show_group_frame = bool(settings_mgr.get("show_group_frame"))
 
-	if selection_manager != null:
-		for u in selection_manager.selected_units:
-			if u == null or not is_instance_valid(u):
-				continue
-			if u is CombatUnitScript and not (u as CombatUnitScript).is_alive:
-				continue
-			var wpos: Vector3 = u.global_position if u.is_inside_tree() else u.position
-			if not iso_cam.is_position_behind(wpos):
-				var from_pt: Vector2 = iso_cam.unproject_position(wpos)
-				screen_pts.append(from_pt)
-				if u is CombatUnitScript:
-					var cu := u as CombatUnitScript
-					if cu.has_player_order:
-						var target_w: Variant = null
-						var line_col := Color(0.2, 0.88, 1.0, 0.85)
-						if cu.current_order_type == "FOCUS_FIRE" and cu.order_target_node != null and is_instance_valid(cu.order_target_node):
-							target_w = (cu.order_target_node as Node3D).global_position
-							line_col = Color(1.0, 0.25, 0.25, 0.9)
-						elif cu.current_order_type == "MOVE" or cu.current_order_type == "COVER":
-							target_w = cu.order_target_position
-							line_col = Color(0.25, 0.95, 0.55, 0.85) if cu.current_order_type == "COVER" else Color(0.2, 0.88, 1.0, 0.85)
-						if target_w is Vector3 and not iso_cam.is_position_behind(target_w as Vector3):
-							order_lines.append({
-								"from": from_pt,
-								"to": iso_cam.unproject_position(target_w as Vector3),
-								"color": line_col,
-							})
+		var screen_pts: Array[Vector2] = []
+		var order_lines: Array[Dictionary] = []
+		if has_cam and selection_manager != null:
+			for u in selection_manager.selected_units:
+				if u == null or not is_instance_valid(u):
+					continue
+				if u is CombatUnitScript and not (u as CombatUnitScript).is_alive:
+					continue
+				var wpos: Vector3 = u.global_position if u.is_inside_tree() else u.position
+				if not iso_cam.is_position_behind(wpos):
+					var from_pt: Vector2 = iso_cam.unproject_position(wpos)
+					screen_pts.append(from_pt)
+					if u is CombatUnitScript:
+						var cu := u as CombatUnitScript
+						if cu.has_player_order:
+							var target_w: Variant = null
+							var line_col := Color(0.2, 0.88, 1.0, 0.85)
+							if cu.current_order_type == "FOCUS_FIRE" and cu.order_target_node != null and is_instance_valid(cu.order_target_node):
+								target_w = (cu.order_target_node as Node3D).global_position
+								line_col = Color(1.0, 0.25, 0.25, 0.9)
+							elif cu.current_order_type == "MOVE" or cu.current_order_type == "COVER":
+								target_w = cu.order_target_position
+								line_col = Color(0.25, 0.95, 0.55, 0.85) if cu.current_order_type == "COVER" else Color(0.2, 0.88, 1.0, 0.85)
+							if target_w is Vector3 and not iso_cam.is_position_behind(target_w as Vector3):
+								order_lines.append({
+									"from": from_pt,
+									"to": iso_cam.unproject_position(target_w as Vector3),
+									"color": line_col,
+								})
+		selection_box_overlay.update_tactical_markers(screen_pts, order_lines)
 
-	selection_box_overlay.update_tactical_markers(screen_pts, order_lines)
+	if health_bar_overlay != null:
+		var unit_bars: Array[Dictionary] = []
+		var boss_bar: Dictionary = {}
+
+		for s in _get_living_strikers():
+			var su := s as CombatUnitScript
+			var wpos: Vector3 = (su.global_position if su.is_inside_tree() else su.position) + Vector3(0.0, 1.35, 0.0)
+			if not has_cam or not iso_cam.is_position_behind(wpos):
+				var scr: Vector2 = iso_cam.unproject_position(wpos) if has_cam else Vector2(wpos.x * 24.0 + 640.0, wpos.z * 24.0 + 360.0)
+				unit_bars.append({
+					"screen_pos": scr,
+					"hp_ratio": clampf(float(su.current_hp) / float(maxi(1, su.max_hp)), 0.0, 1.0),
+					"current_hp": su.current_hp,
+					"max_hp": su.max_hp,
+					"is_enemy": false,
+					"is_boss": false,
+					"name": su.name,
+				})
+
+		for e in _get_living_enemies():
+			var eu := e as EnemyUnitScript
+			var is_boss: bool = eu is BossUnitScript
+			var y_off: float = 2.1 if is_boss else 1.45
+			var wpos: Vector3 = (eu.global_position if eu.is_inside_tree() else eu.position) + Vector3(0.0, y_off, 0.0)
+			if not has_cam or not iso_cam.is_position_behind(wpos):
+				var scr: Vector2 = iso_cam.unproject_position(wpos) if has_cam else Vector2(wpos.x * 24.0 + 640.0, wpos.z * 24.0 + 360.0)
+				unit_bars.append({
+					"screen_pos": scr,
+					"hp_ratio": clampf(float(eu.current_hp) / float(maxi(1, eu.max_hp)), 0.0, 1.0),
+					"current_hp": eu.current_hp,
+					"max_hp": eu.max_hp,
+					"is_enemy": true,
+					"is_boss": is_boss,
+					"name": "BOSS" if is_boss else eu.name,
+				})
+			if is_boss and boss_bar.is_empty():
+				var boss := eu as BossUnitScript
+				boss_bar = {
+					"visible": true,
+					"name": "BOSS: %s" % boss.name,
+					"phase": boss.current_phase,
+					"hp_ratio": boss.get_hp_ratio(),
+					"current_hp": boss.current_hp,
+					"max_hp": boss.max_hp,
+				}
+
+		health_bar_overlay.update_bars(unit_bars, boss_bar)
 
 func _handle_right_click_order(screen_pos: Vector2) -> void:
 	var iso_cam := _get_isometric_camera()
@@ -1042,14 +1136,77 @@ func _persist_squad_hp() -> void:
 	room_manager.set_squad_hp(hp_map)
 
 func _refresh_all_unit_labels() -> void:
+	var cam_yaw: float = camera_rig.rotation.y if camera_rig != null else 0.0
 	for s in squad_units:
 		if s != null and is_instance_valid(s):
-			proxy_factory.update_unit_hp_label(s, s.name, s.current_hp, s.max_hp)
+			proxy_factory.update_unit_hp_label(s, s.name, s.current_hp, s.max_hp, false)
+			var bar3d := s.get_node_or_null("VisualRoot/HPBar3D") as Node3D
+			if bar3d != null:
+				bar3d.rotation.y = cam_yaw
 			if combat_hud != null and s.unit_data != null:
 				combat_hud.update_striker_hp(s.unit_data.id, s.current_hp, s.max_hp)
 	for e in enemy_units:
 		if e != null and is_instance_valid(e):
-			proxy_factory.update_unit_hp_label(e, "BOSS" if e is BossUnitScript else e.name, e.current_hp, e.max_hp)
+			proxy_factory.update_unit_hp_label(e, "BOSS" if e is BossUnitScript else e.name, e.current_hp, e.max_hp, true)
+			var bar3d := e.get_node_or_null("VisualRoot/HPBar3D") as Node3D
+			if bar3d != null:
+				bar3d.rotation.y = cam_yaw
+
+func _bind_unit_hp_feedback(unit: CombatUnitScript) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	unit.set_meta(&"_prev_hp", unit.current_hp)
+	var cb := _on_unit_hp_changed.bind(unit)
+	if not unit.hp_changed.is_connected(cb):
+		unit.hp_changed.connect(cb)
+
+func _on_unit_hp_changed(current: int, _max_val: int, unit: CombatUnitScript) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	var prev: int = int(unit.get_meta(&"_prev_hp", current))
+	unit.set_meta(&"_prev_hp", current)
+	var diff: int = current - prev
+	if diff == 0:
+		return
+	var is_enemy: bool = unit is EnemyUnitScript
+	proxy_factory.update_unit_hp_label(unit, "BOSS" if unit is BossUnitScript else unit.name, current, _max_val, is_enemy)
+	if health_bar_overlay != null:
+		var anchor: Vector3 = (unit.global_position if unit.is_inside_tree() else unit.position) + Vector3(0.0, 1.5, 0.0)
+		if diff < 0:
+			var dmg_amt: int = -diff
+			health_bar_overlay.spawn_floating_number(anchor, dmg_amt, false, dmg_amt >= 350)
+		else:
+			health_bar_overlay.spawn_floating_number(anchor, diff, true, false)
+
+func _get_skill_caster_origin() -> Vector3:
+	if selection_manager != null:
+		selection_manager.prune_invalid_units()
+		for u in selection_manager.selected_units:
+			if u is CombatUnitScript and (u as CombatUnitScript).is_alive:
+				return (u as Node3D).global_position if u.is_inside_tree() else (u as Node3D).position
+	var living: Array = _get_living_strikers()
+	if not living.is_empty():
+		var sum := Vector3.ZERO
+		for s in living:
+			var n := s as Node3D
+			sum += n.global_position if n.is_inside_tree() else n.position
+		return sum / float(living.size())
+	if camera_rig != null:
+		return camera_rig.global_position if camera_rig.is_inside_tree() else camera_rig.position
+	return Vector3.ZERO
+
+func _recenter_camera_on_squad() -> void:
+	if camera_rig == null:
+		return
+	var living: Array = _get_living_strikers()
+	if living.is_empty():
+		camera_rig.center_on_position(Vector3.ZERO)
+		return
+	var sum := Vector3.ZERO
+	for s in living:
+		var n := s as Node3D
+		sum += n.global_position if n.is_inside_tree() else n.position
+	camera_rig.center_on_position(sum / float(living.size()))
 
 func _clear_enemies() -> void:
 	for e in enemy_units:

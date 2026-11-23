@@ -96,6 +96,18 @@ func _run_tests() -> void:
 	check(arena.room_manager.is_draft_open == false, "Card draft must start closed")
 	check(arena.combat_hud != null and arena.combat_hud.striker_hp.size() == 4, "CombatHUD must display 4 Strikers")
 
+	var settings_mgr: Node = root.get_node_or_null("SettingsManager")
+	check(settings_mgr != null and settings_mgr.get("show_group_frame") == false, "SettingsManager default show_group_frame must be false")
+	check(arena.selection_box_overlay != null and arena.selection_box_overlay.show_group_frame == false, "SelectionBoxOverlay show_group_frame must default to false")
+
+	# 2b. Combat Camera panning & recentering
+	arena.camera_rig.center_on_position(Vector3(5.0, 0.0, 8.0))
+	check(is_equal_approx(arena.camera_rig.global_position.x, 5.0) and is_equal_approx(arena.camera_rig.global_position.z, 8.0), "RTSCamera3D.center_on_position must recenter XZ position")
+	var pos_before_drag: Vector3 = arena.camera_rig.global_position
+	arena.camera_rig.pan_by_screen_delta(Vector2(40.0, -30.0))
+	check(not arena.camera_rig.global_position.is_equal_approx(pos_before_drag), "RTSCamera3D.pan_by_screen_delta must pan camera on XZ plane")
+	arena.camera_rig.center_on_position(Vector3.ZERO)
+
 	# 3. step_combat accumulates cost bar & ticks units without errors
 	var cost_before: float = arena.ex_skill_system.cost_bar.current_cost
 	arena.step_combat(0.5)
@@ -127,15 +139,35 @@ func _run_tests() -> void:
 	check(enemy_reticle != null and enemy_reticle.visible == true, "FOCUS_FIRE must reveal enemy VisualRoot/TargetReticle")
 
 	var preview_skill: SkillData = arena.ex_skill_system.registered_skills[0]
+	arena.targeting_overlay.set_caster_origin(Vector3.ZERO)
 	arena.targeting_overlay.begin_targeting(preview_skill)
 	var prev_pos: Vector3 = arena.targeting_overlay.update_preview(Vector2(640.0, 360.0), null, 0.0)
 	check(arena.targeting_overlay.is_targeting == true and prev_pos == arena.targeting_overlay.preview_world_position, "SkillTargetingOverlay.update_preview must update preview_world_position")
+	var clamped_far: Vector3 = arena.targeting_overlay.update_preview(Vector2(100.0, 0.0), null, 0.0)
+	check(Vector2(clamped_far.x, clamped_far.z).length() <= preview_skill.cast_range + 0.05, "SkillTargetingOverlay.update_preview must clamp out-of-range targets to cast_range")
+	check(arena.targeting_overlay.is_target_in_range_flag == false, "Out-of-range preview must mark is_target_in_range_flag false")
 	arena.targeting_overlay.cancel_targeting()
 	check(arena.targeting_overlay.is_targeting == false and arena.targeting_overlay.visible == false, "cancel_targeting must reset overlay visibility")
 	if arena.skill_preview_disc != null:
 		check(arena.skill_preview_disc.visible == false, "cancel_targeting must hide 3D skill_preview_disc")
 
-	# 4. Cast an EX-Skill and verify cost deduction + AoE damage
+	# 3c. SkillData range config & CIRCLE/CONE/LINE AoE checks
+	var shape_skill := SkillData.new()
+	shape_skill.cast_range = 15.0
+	shape_skill.aoe_radius = 6.0
+	shape_skill.aoe_shape = "CIRCLE"
+	check(shape_skill.clamp_target_to_range(Vector3.ZERO, Vector3(30.0, 0.0, 0.0)).is_equal_approx(Vector3(15.0, 0.0, 0.0)), "SkillData.clamp_target_to_range must clamp to cast_range")
+	check(shape_skill.is_point_inside_aoe(Vector3.ZERO, Vector3(8.0, 0.0, 0.0), Vector3(11.0, 0.0, 0.0)) == true, "CIRCLE AoE must include points within aoe_radius")
+	shape_skill.aoe_shape = "CONE"
+	shape_skill.cone_angle_deg = 60.0
+	check(shape_skill.is_point_inside_aoe(Vector3.ZERO, Vector3(0.0, 0.0, -10.0), Vector3(1.0, 0.0, -5.0)) == true, "CONE AoE must include forward-cone target")
+	check(shape_skill.is_point_inside_aoe(Vector3.ZERO, Vector3(0.0, 0.0, -10.0), Vector3(0.0, 0.0, 5.0)) == false, "CONE AoE must exclude behind-caster point")
+	shape_skill.aoe_shape = "LINE"
+	shape_skill.line_width = 2.0
+	check(shape_skill.is_point_inside_aoe(Vector3.ZERO, Vector3(0.0, 0.0, -10.0), Vector3(0.5, 0.0, -6.0)) == true, "LINE AoE must include point inside beam width")
+	check(shape_skill.is_point_inside_aoe(Vector3.ZERO, Vector3(0.0, 0.0, -10.0), Vector3(3.0, 0.0, -6.0)) == false, "LINE AoE must exclude point outside beam width")
+
+	# 4. Cast an EX-Skill and verify cost deduction + AoE damage + HP bar & floating popup
 	arena.ex_skill_system.cost_bar.current_cost = 6.0
 	var dmg_skill: SkillData = arena.ex_skill_system.registered_skills[0]
 	var first_enemy = arena.enemy_units[0]
@@ -143,6 +175,9 @@ func _run_tests() -> void:
 	check(arena.ex_skill_system.activate_skill(dmg_skill, first_enemy.position) == true, "Activating Missile Barrage must succeed")
 	check(is_equal_approx(arena.ex_skill_system.cost_bar.current_cost, 3.0), "Cost bar must drop by skill cost (6.0 -> 3.0)")
 	check(first_enemy.current_hp < enemy_hp_before, "Offensive EX-Skill must damage enemies inside radius")
+	var enemy_hp_pivot := first_enemy.get_node_or_null("VisualRoot/HPBar3D/HPFillPivot") as Node3D
+	check(enemy_hp_pivot != null and enemy_hp_pivot.scale.x < 1.0, "Damaging enemy must shrink VisualRoot/HPBar3D/HPFillPivot.scale.x")
+	check(arena.health_bar_overlay != null and arena.health_bar_overlay.floating_numbers.size() >= 1, "Damaging enemy must spawn floating damage number")
 
 	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
 	for enemy in arena.enemy_units:
@@ -168,6 +203,7 @@ func _run_tests() -> void:
 		root.remove_child(arena)
 		arena.free()
 		return
+	check(arena.health_bar_overlay != null and bool(arena.health_bar_overlay.boss_bar.get("visible", false)) == true, "BOSS room must populate CombatHealthBarOverlay.boss_bar")
 
 	var target_striker = arena.squad_units[0]
 	var striker_hp_before: int = target_striker.current_hp

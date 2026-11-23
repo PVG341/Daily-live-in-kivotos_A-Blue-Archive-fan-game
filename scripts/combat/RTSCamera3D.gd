@@ -16,12 +16,15 @@ const DEFAULT_INPUT_BINDINGS := {
 @export var zoom_speed: float = 2.0
 @export var min_zoom: float = 5.0
 @export var max_zoom: float = 25.0
+@export var drag_pan_sensitivity: float = 0.0022
 @export var bounds_min: Vector2 = Vector2(-50.0, -50.0)
 @export var bounds_max: Vector2 = Vector2(50.0, 50.0)
 
 var current_zoom: float = 12.0
 var yaw_degrees: float = 35.264
 var pitch_degrees: float = -45.0
+var is_drag_panning: bool = false
+var _last_drag_pos: Vector2 = Vector2.ZERO
 
 var pitch_pivot: Node3D = null
 var isometric_camera: Camera3D = null
@@ -32,21 +35,71 @@ func _ready() -> void:
 	_sync_transforms()
 
 func _process(delta: float) -> void:
-	var pan_input := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+	var pan_input: Vector2 = get_keyboard_pan_vector()
 	if not pan_input.is_zero_approx():
 		pan_planar(pan_input, delta)
 
 	var rot_axis: float = Input.get_axis(&"cam_rotate_right", &"cam_rotate_left")
+	if is_zero_approx(rot_axis):
+		if Input.is_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_Q):
+			rot_axis += 1.0
+		if Input.is_key_pressed(KEY_E) or Input.is_physical_key_pressed(KEY_E):
+			rot_axis -= 1.0
 	if not is_zero_approx(rot_axis):
 		rotate_yaw(rot_axis * rad_to_deg(rotate_speed) * delta)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
+	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			adjust_zoom(-zoom_speed)
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			adjust_zoom(zoom_speed)
+		if mb.button_index == MOUSE_BUTTON_MIDDLE or (mb.button_index == MOUSE_BUTTON_LEFT and Input.is_key_pressed(KEY_SPACE)):
+			is_drag_panning = mb.pressed
+			_last_drag_pos = mb.position
+			get_viewport().set_input_as_handled()
+			return
+		if mb.pressed:
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				adjust_zoom(-zoom_speed)
+			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				adjust_zoom(zoom_speed)
+	elif event is InputEventMouseMotion and is_drag_panning:
+		var mm := event as InputEventMouseMotion
+		var delta_px: Vector2 = mm.relative if not mm.relative.is_zero_approx() else (mm.position - _last_drag_pos)
+		_last_drag_pos = mm.position
+		if not delta_px.is_zero_approx():
+			pan_by_screen_delta(delta_px)
+		get_viewport().set_input_as_handled()
+
+## Returns combined WASD + Arrow Key planar movement vector regardless of UI focus.
+func get_keyboard_pan_vector() -> Vector2:
+	var pan_input := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+	if not pan_input.is_zero_approx():
+		return pan_input
+	var raw := Vector2.ZERO
+	if Input.is_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		raw.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		raw.x += 1.0
+	if Input.is_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		raw.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		raw.y += 1.0
+	return raw.normalized() if not raw.is_zero_approx() else Vector2.ZERO
+
+## Pans camera rig from screen-space drag pixels scaled by zoom level and clamped to bounds.
+func pan_by_screen_delta(screen_delta: Vector2) -> Vector3:
+	var pos: Vector3 = global_position if is_inside_tree() else position
+	if not screen_delta.is_zero_approx():
+		var yaw_basis := Basis(Vector3.UP, deg_to_rad(yaw_degrees))
+		var offset_local := Vector3(-screen_delta.x, 0.0, -screen_delta.y) * (current_zoom * drag_pan_sensitivity)
+		var world_offset: Vector3 = yaw_basis * offset_local
+		world_offset.y = 0.0
+		pos += world_offset
+	return _apply_clamped_position(pos)
+
+## Recenters the camera rig XZ position on a world target clamped to bounds.
+func center_on_position(target_pos: Vector3) -> Vector3:
+	var cur_y: float = global_position.y if is_inside_tree() else position.y
+	return _apply_clamped_position(Vector3(target_pos.x, cur_y, target_pos.z))
 
 ## Moves camera rig on the XZ plane relative to current yaw and clamps to [bounds_min, bounds_max].
 func pan_planar(input_dir: Vector2, delta: float) -> Vector3:
@@ -57,7 +110,9 @@ func pan_planar(input_dir: Vector2, delta: float) -> Vector3:
 		var world_dir: Vector3 = yaw_basis * Vector3(dir2.x, 0.0, dir2.y)
 		world_dir.y = 0.0
 		pos += world_dir * pan_speed * delta
+	return _apply_clamped_position(pos)
 
+func _apply_clamped_position(pos: Vector3) -> Vector3:
 	var min_x: float = minf(bounds_min.x, bounds_max.x)
 	var max_x: float = maxf(bounds_min.x, bounds_max.x)
 	var min_z: float = minf(bounds_min.y, bounds_max.y)
@@ -102,8 +157,22 @@ func _sync_transforms() -> void:
 
 func _ensure_input_map() -> void:
 	for action: StringName in DEFAULT_INPUT_BINDINGS:
+		var keycode: Key = DEFAULT_INPUT_BINDINGS[action]
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)
-			var ev := InputEventKey.new()
-			ev.physical_keycode = DEFAULT_INPUT_BINDINGS[action]
-			InputMap.action_add_event(action, ev)
+		_bind_key_if_missing(action, keycode)
+	_bind_key_if_missing(&"move_forward", KEY_UP)
+	_bind_key_if_missing(&"move_back", KEY_DOWN)
+	_bind_key_if_missing(&"move_left", KEY_LEFT)
+	_bind_key_if_missing(&"move_right", KEY_RIGHT)
+
+func _bind_key_if_missing(action: StringName, keycode: Key) -> void:
+	for existing in InputMap.action_get_events(action):
+		if existing is InputEventKey:
+			var k := existing as InputEventKey
+			if k.keycode == keycode or k.physical_keycode == keycode:
+				return
+	var ev := InputEventKey.new()
+	ev.keycode = keycode
+	ev.physical_keycode = keycode
+	InputMap.action_add_event(action, ev)

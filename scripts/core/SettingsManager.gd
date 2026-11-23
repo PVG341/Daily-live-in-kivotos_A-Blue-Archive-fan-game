@@ -15,6 +15,7 @@ var max_active_students: int = 5
 var bloom_enabled: bool = true
 var dof_enabled: bool = false
 var particles_enabled: bool = true
+var show_group_frame: bool = false
 
 var _fallback_warned: bool = false
 
@@ -92,12 +93,17 @@ func apply_post_processing(p_bloom: bool, p_dof: bool, p_particles: bool) -> voi
 	particles_enabled = p_particles
 	settings_changed.emit()
 
+func apply_show_group_frame(enabled: bool) -> void:
+	show_group_frame = enabled
+	settings_changed.emit()
+
 func reset_to_defaults() -> void:
 	apply_render_scale(1.0)
 	apply_draw_distance(120.0)
 	apply_shadow_tier(2)
 	apply_max_active_students(5)
 	apply_post_processing(true, false, true)
+	apply_show_group_frame(false)
 
 func to_dict() -> Dictionary:
 	return {
@@ -108,6 +114,7 @@ func to_dict() -> Dictionary:
 		"bloom_enabled": bloom_enabled,
 		"dof_enabled": dof_enabled,
 		"particles_enabled": particles_enabled,
+		"show_group_frame": show_group_frame,
 	}
 
 func from_dict(data: Dictionary) -> void:
@@ -125,6 +132,8 @@ func from_dict(data: Dictionary) -> void:
 		dof_enabled = bool(data["dof_enabled"])
 	if data.has("particles_enabled"):
 		particles_enabled = bool(data["particles_enabled"])
+	if data.has("show_group_frame"):
+		show_group_frame = bool(data["show_group_frame"])
 	settings_changed.emit()
 
 func save_settings() -> bool:

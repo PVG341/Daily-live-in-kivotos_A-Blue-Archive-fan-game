@@ -166,11 +166,46 @@ func attach_unit_visuals(
 	order_icon.text = ""
 	order_pillar.add_child(order_icon)
 
+	# 3D HP Bar (background + shrinking left-aligned fill pivot)
+	var hp_bar_3d := Node3D.new()
+	hp_bar_3d.name = "HPBar3D"
+	hp_bar_3d.position = Vector3(0.0, 1.42 * scale_factor, 0.0)
+	vis_root.add_child(hp_bar_3d)
+
+	var hp_back_inst := MeshInstance3D.new()
+	hp_back_inst.name = "HPBackMesh"
+	var hp_back_mesh := BoxMesh.new()
+	hp_back_mesh.size = Vector3(0.92 * scale_factor, 0.11 * scale_factor, 0.04)
+	var hp_back_mat := StandardMaterial3D.new()
+	hp_back_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hp_back_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	hp_back_mat.albedo_color = Color(0.08, 0.08, 0.1, 0.88)
+	hp_back_mesh.material = hp_back_mat
+	hp_back_inst.mesh = hp_back_mesh
+	hp_bar_3d.add_child(hp_back_inst)
+
+	var hp_fill_pivot := Node3D.new()
+	hp_fill_pivot.name = "HPFillPivot"
+	hp_fill_pivot.position = Vector3(-0.45 * scale_factor, 0.0, 0.01)
+	hp_bar_3d.add_child(hp_fill_pivot)
+
+	var hp_fill_inst := MeshInstance3D.new()
+	hp_fill_inst.name = "HPFillMesh"
+	var hp_fill_mesh := BoxMesh.new()
+	hp_fill_mesh.size = Vector3(0.90 * scale_factor, 0.08 * scale_factor, 0.045)
+	var hp_fill_mat := StandardMaterial3D.new()
+	hp_fill_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hp_fill_mat.albedo_color = Color(0.2, 0.92, 0.45)
+	hp_fill_mesh.material = hp_fill_mat
+	hp_fill_inst.mesh = hp_fill_mesh
+	hp_fill_inst.position = Vector3(0.45 * scale_factor, 0.0, 0.0)
+	hp_fill_pivot.add_child(hp_fill_inst)
+
 	# 3D billboarded HP bar label
 	var hp_label := Label3D.new()
 	hp_label.name = "HPBarLabel"
 	hp_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	hp_label.position = Vector3(0.0, 1.62 * scale_factor, 0.0)
+	hp_label.position = Vector3(0.0, 1.68 * scale_factor, 0.0)
 	hp_label.font_size = 24
 	hp_label.outline_size = 6
 	hp_label.modulate = Color.WHITE
@@ -252,13 +287,68 @@ func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
 
 	pillar.visible = true
 
-## Updates the floating 3D HP label above a unit.
-func update_unit_hp_label(unit: Node3D, display_name: String, current_hp: int, max_hp: int) -> void:
+## Updates the floating 3D HP label and 3D HP fill bar above a unit.
+func update_unit_hp_label(unit: Node3D, display_name: String, current_hp: int, max_hp: int, is_enemy: bool = false) -> void:
 	if unit == null or not is_instance_valid(unit):
 		return
+	var safe_max: int = maxi(1, max_hp)
+	var clamped_hp: int = maxi(0, current_hp)
+	var hp_ratio: float = clampf(float(clamped_hp) / float(safe_max), 0.0, 1.0)
+
 	var lbl := unit.get_node_or_null("VisualRoot/HPBarLabel") as Label3D
 	if lbl != null:
-		lbl.text = "%s\n%d/%d" % [display_name, maxi(0, current_hp), maxi(1, max_hp)]
+		lbl.text = "%s\n%d/%d" % [display_name, clamped_hp, safe_max]
+
+	var fill_pivot := unit.get_node_or_null("VisualRoot/HPBar3D/HPFillPivot") as Node3D
+	if fill_pivot != null:
+		fill_pivot.scale.x = hp_ratio
+
+	var fill_mesh := unit.get_node_or_null("VisualRoot/HPBar3D/HPFillMesh") as MeshInstance3D
+	if fill_mesh != null and fill_mesh.mesh is BoxMesh:
+		var bm := fill_mesh.mesh as BoxMesh
+		if bm.material is StandardMaterial3D:
+			var mat := bm.material as StandardMaterial3D
+			if is_enemy:
+				mat.albedo_color = Color(0.95, 0.22, 0.22) if hp_ratio > 0.3 else Color(1.0, 0.55, 0.12)
+			else:
+				mat.albedo_color = Color(0.2, 0.92, 0.45) if hp_ratio > 0.35 else Color(1.0, 0.8, 0.15)
+
+## Creates a 3D ground ring displaying maximum cast_range while targeting an EX-Skill.
+func create_skill_range_ring() -> Node3D:
+	var root := Node3D.new()
+	root.name = "SkillRangeRing"
+	root.visible = false
+
+	var ring_inst := MeshInstance3D.new()
+	ring_inst.name = "RangeRingMesh"
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = 0.985
+	mesh.outer_radius = 1.0
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.25, 0.85, 1.0, 0.52)
+	mesh.material = mat
+	ring_inst.mesh = mesh
+	ring_inst.position = Vector3(0.0, 0.05, 0.0)
+	root.add_child(ring_inst)
+	return root
+
+## Positions and scales the 3D EX-Skill max cast_range ground ring around origin_pos.
+func update_skill_range_ring(ring: Node3D, origin_pos: Vector3, max_range: float, visible_state: bool) -> void:
+	if ring == null or not is_instance_valid(ring):
+		return
+	ring.visible = visible_state and max_range > 0.0
+	if ring.visible:
+		var r: float = maxf(0.5, max_range)
+		ring.position = Vector3(origin_pos.x, origin_pos.y, origin_pos.z)
+		var ring_inst := ring.get_node_or_null("RangeRingMesh") as MeshInstance3D
+		if ring_inst != null and ring_inst.mesh is TorusMesh:
+			var tm := ring_inst.mesh as TorusMesh
+			var desired_inner: float = maxf(0.2, r - 0.18)
+			if not is_equal_approx(tm.outer_radius, r):
+				tm.inner_radius = desired_inner
+				tm.outer_radius = r
 
 ## Creates a 3D ground disc for previewing EX-Skill AoE radius under the cursor.
 func create_skill_preview_disc() -> Node3D:
@@ -282,8 +372,8 @@ func create_skill_preview_disc() -> Node3D:
 	root.add_child(disc)
 	return root
 
-## Positions and scales the 3D EX-Skill AoE preview disc on the ground.
-func update_skill_preview_disc(disc: Node3D, world_pos: Vector3, radius: float, visible_state: bool) -> void:
+## Positions, scales, and colors the 3D EX-Skill AoE preview disc on the ground.
+func update_skill_preview_disc(disc: Node3D, world_pos: Vector3, radius: float, visible_state: bool, in_range: bool = true) -> void:
 	if disc == null or not is_instance_valid(disc):
 		return
 	disc.visible = visible_state
@@ -291,6 +381,11 @@ func update_skill_preview_disc(disc: Node3D, world_pos: Vector3, radius: float, 
 		var r: float = maxf(0.25, radius)
 		disc.position = Vector3(world_pos.x, world_pos.y, world_pos.z)
 		disc.scale = Vector3(r, 1.0, r)
+		var mesh_inst := disc.get_node_or_null("DiscMesh") as MeshInstance3D
+		if mesh_inst != null and mesh_inst.mesh is CylinderMesh:
+			var cm := mesh_inst.mesh as CylinderMesh
+			if cm.material is StandardMaterial3D:
+				(cm.material as StandardMaterial3D).albedo_color = Color(1.0, 0.82, 0.15, 0.38) if in_range else Color(1.0, 0.28, 0.18, 0.42)
 
 ## Creates a 3D beacon marker showing Move/Cover destinations.
 func create_order_beacon() -> Node3D:

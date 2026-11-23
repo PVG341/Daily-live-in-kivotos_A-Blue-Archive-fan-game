@@ -6,6 +6,7 @@ var is_dragging: bool = false
 var drag_rect: Rect2 = Rect2()
 var selected_screen_points: Array[Vector2] = []
 var order_lines: Array[Dictionary] = []
+var show_group_frame: bool = false
 
 func set_drag_rect(active: bool, rect: Rect2) -> void:
 	is_dragging = active
@@ -26,8 +27,8 @@ func _draw() -> void:
 		draw_line(from_pt, to_pt, col, 2.0)
 		draw_arc(to_pt, 8.0, 0.0, TAU, 16, col, 2.0)
 
-	# 2. Draw unit selection brackets & group multi-selection hull
-	if selected_screen_points.size() >= 2:
+	# 2. Draw unit selection brackets & optional group multi-selection hull
+	if show_group_frame and selected_screen_points.size() >= 2:
 		var min_pt: Vector2 = selected_screen_points[0]
 		var max_pt: Vector2 = selected_screen_points[0]
 		for pt in selected_screen_points:

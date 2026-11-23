@@ -42,7 +42,7 @@ D:\This PC\Project\test
 │   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, HubSceneController, DoorPortal, InteractiveDoor, InteractiveElevator, ElevatorCallButton, FloorVisibilityZone, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
 │   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
 │   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
-│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
+│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, CombatHealthBarOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
 │   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI
 │   └── ui/            # HUDManager, PhoneOSManager, PauseMenuManager, ModManagerUI, CombatHUD
 ├── shaders/           # cel_toon_shader.gdshader, outline_shader.gdshader
@@ -160,6 +160,15 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **Cột sáng Lệnh RTS & Target Reticle:** `ChibiProxyFactory` bổ sung `OrderStatusPillar` (cột sáng + nhãn trạng thái `"🛡️ HOLD POS"`, `"🚫 HOLD FIRE"`, `"🎯 FOCUS FIRE"`, `"🧱 TAKE COVER"`, `"➔ MOVING"`) và `TargetReticle` (`"▼ TARGET ▼"`) trên mục tiêu bị focus fire; `CombatArenaController` phát `order_beacon` tại vị trí ra lệnh.
 * **Xem trước Phạm vi EX-Skill (Live AoE Range Preview):** `SkillTargetingOverlay` & `CombatArenaController` cập nhật `skill_preview_disc` (3D) + vòng tròn AoE 2D theo vị trí con trỏ chuột khi nhắm kỹ năng.
 * **Địa hình Chiến trường Mở rộng (`TacticalTerrainZone.gd`):** Mở rộng kích thước `room_combat.tscn` (`64×56`), `room_elite.tscn` (`68×60`), `room_boss.tscn` (`72×64`) với nhà đô thị, bunker bê tông (`BUNKER_INTERIOR`), cầu vượt (`UNDER_BRIDGE`), mương nước làm chậm (`WATER_TRENCH`), hố pháo (`CRATER_PIT`), và điểm cao chiến thuật tăng tầm đánh (`HIGH_GROUND`).
+
+---
+
+## 8. Phase A — Thanh máu Kẻ địch, Cấu hình Tầm Skill & Di chuyển Camera Combat
+
+* **Tùy chọn khung chọn nhóm (`SettingsManager` & `SelectionBoxOverlay`):** Thêm `show_group_frame` (mặc định `false`) để ẩn khung xanh bao nhóm sau khi thả chuột kéo chọn, chỉ giữ vòng sáng dưới chân và viền HUD.
+* **Di chuyển & Xoay Camera Combat (`RTSCamera3D`):** Hỗ trợ đầy đủ WASD, phím mũi tên (`Arrow Keys`), kéo chuột giữa hoặc `Space + Chuột trái` (`pan_by_screen_delta()`), xoay `Q/E`, zoom cuộn chuột và phím `C` / `Home` để đưa camera về lại tâm đội hình.
+* **Cấu hình Tầm & Hình dạng Skill (`SkillData` & `SkillTargetingOverlay`):** Bổ sung `cast_range`, `min_range`, `aoe_shape` (`CIRCLE`/`CONE`/`LINE`), `cone_angle_deg`, `line_width`, `requires_los`, `pierce_walls`, `wall_damage`; giới hạn điểm nhắm vào trong `cast_range` kèm vòng `SkillRangeRing` 3D và chuyển màu cam-đỏ khi vượt tầm.
+* **Thanh máu 3D/2D, Boss HP Bar & Số sát thương bay (`ChibiProxyFactory` & `CombatHealthBarOverlay`):** Gắn `HPBar3D` trên từng đơn vị (tự xoay mặt theo camera), overlay thanh máu 2D, Boss HP bar trên đỉnh màn hình (kèm mốc chuyển pha 70% / 30%) và số sát thương/hồi máu bay lên theo thời gian thực.
 
 
 
