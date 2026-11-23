@@ -179,6 +179,43 @@ func _run_tests() -> void:
 	check(enemy_hp_pivot != null and enemy_hp_pivot.scale.x < 1.0, "Damaging enemy must shrink VisualRoot/HPBar3D/HPFillPivot.scale.x")
 	check(arena.health_bar_overlay != null and arena.health_bar_overlay.floating_numbers.size() >= 1, "Damaging enemy must spawn floating damage number")
 
+	# 4b. Phase B — Line-of-Sight, Wall Blocking, Penetration & Wall-Breaching Skills
+	var wall_script: GDScript = load("res://scripts/combat/DestructibleWall3D.gd")
+	check(wall_script != null and wall_script.can_instantiate(), "DestructibleWall3D.gd must load cleanly")
+	check(arena.ex_skill_system.registered_skills.size() >= 4, "Arena must register piercing/breaching EX skills (Shotgun Breach & Railgun Beam)")
+	check(arena.current_room_info.get_wall_obstacles().size() >= 6, "room_combat must subdivide modular DestructibleWall3D obstacles (>= 6)")
+
+	var wall_test_enemy = arena.enemy_units[1]
+	wall_test_enemy.position = Vector3(0.0, 0.0, -5.0)
+	var test_wall = wall_script.new()
+	test_wall.name = "PhaseBTestWall"
+	test_wall.position = Vector3(0.0, 1.5, 0.0)
+	arena.current_room_info.add_child(test_wall)
+	test_wall.setup_wall(Vector3(4.0, 3.0, 0.6), 2, 500, Color(0.7, 0.6, 0.5), true)
+	arena.current_room_info.register_wall_obstacle(test_wall)
+	arena.projectile_manager.set_wall_obstacles(arena.current_room_info.get_wall_obstacles())
+
+	check(arena.current_room_info.check_line_of_sight(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 0)["clear"] == false, "Normal LOS (pen=0) must be blocked by armor_tier=2 wall")
+	check(arena.current_room_info.check_line_of_sight(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 2)["clear"] == true, "High penetration LOS (pen=2) must pierce armor_tier=2 wall")
+
+	var hp_pre_block: int = wall_test_enemy.current_hp
+	var norm_proj: Dictionary = arena.projectile_manager.spawn_projectile(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 25.0, 200, striker0, wall_test_enemy, 0, 10)
+	arena.projectile_manager.tick_projectiles(1.0)
+	check(norm_proj["blocked_by_wall"] == test_wall and wall_test_enemy.current_hp == hp_pre_block, "Normal projectile (pen=0) must stop on wall and deal 0 damage behind it")
+
+	var wall_hp_before_pierce: int = test_wall.current_hp
+	var pierce_proj: Dictionary = arena.projectile_manager.spawn_projectile(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 25.0, 200, striker0, wall_test_enemy, 2, 100)
+	arena.projectile_manager.tick_projectiles(1.0)
+	check(pierce_proj["blocked_by_wall"] == null and test_wall.current_hp < wall_hp_before_pierce and wall_test_enemy.current_hp < hp_pre_block, "Piercing projectile (pen=2) must pierce wall, damage wall, and hit enemy behind it")
+
+	striker0.position = Vector3(0.0, 0.0, 5.0)
+	arena.selection_manager.select_unit(striker0, false)
+	arena.ex_skill_system.cost_bar.current_cost = 10.0
+	var breach_skill: SkillData = arena.ex_skill_system.registered_skills[2]
+	check(arena.ex_skill_system.activate_skill(breach_skill, Vector3(0.0, 0.0, -5.0)) == true, "Shotgun Breach cone skill must activate")
+	check(test_wall.is_destroyed == true, "Shotgun Breach must destroy the armor_tier=2 wall segment")
+	check(arena.current_room_info.check_line_of_sight(Vector3(0.0, 0.7, 5.0), Vector3(0.0, 0.7, -5.0), 0)["clear"] == true, "Destroyed wall must leave a breached hole allowing normal bullets through")
+
 	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
 	for enemy in arena.enemy_units:
 		if enemy.is_alive:

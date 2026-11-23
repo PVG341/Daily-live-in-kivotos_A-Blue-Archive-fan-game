@@ -11,6 +11,7 @@ var preview_world_position: Vector3 = Vector3.ZERO
 var unclamped_world_position: Vector3 = Vector3.ZERO
 var caster_origin: Vector3 = Vector3.ZERO
 var is_target_in_range_flag: bool = true
+var is_los_blocked_flag: bool = false
 var preview_screen_position: Vector2 = Vector2.ZERO
 var preview_pixel_radius: float = 64.0
 var caster_screen_position: Vector2 = Vector2.ZERO
@@ -30,6 +31,7 @@ func begin_targeting(skill: SkillData) -> void:
 	active_skill = skill
 	is_targeting = true
 	is_target_in_range_flag = true
+	is_los_blocked_flag = false
 	visible = true
 	queue_redraw()
 
@@ -98,6 +100,7 @@ func cancel_targeting() -> void:
 	is_targeting = false
 	active_skill = null
 	is_target_in_range_flag = true
+	is_los_blocked_flag = false
 	cast_range_pixel_radius = 0.0
 	visible = false
 	queue_redraw()
@@ -108,7 +111,31 @@ func _draw() -> void:
 		return
 	if cast_range_pixel_radius > 0.0:
 		draw_arc(caster_screen_position, cast_range_pixel_radius, 0.0, TAU, 56, Color(0.3, 0.85, 1.0, 0.45), 1.8)
-	var fill_col := Color(1.0, 0.75, 0.15, 0.22) if is_target_in_range_flag else Color(1.0, 0.25, 0.18, 0.24)
-	var ring_col := Color(1.0, 0.85, 0.2, 0.95) if is_target_in_range_flag else Color(1.0, 0.3, 0.2, 0.95)
-	draw_circle(preview_screen_position, preview_pixel_radius, fill_col)
-	draw_arc(preview_screen_position, preview_pixel_radius, 0.0, TAU, 40, ring_col, 2.5)
+	var blocked_visual: bool = (not is_target_in_range_flag) or (is_los_blocked_flag and not active_skill.pierce_walls)
+	var fill_col := Color(1.0, 0.25, 0.18, 0.24) if blocked_visual else Color(1.0, 0.75, 0.15, 0.22)
+	var ring_col := Color(1.0, 0.3, 0.2, 0.95) if blocked_visual else Color(1.0, 0.85, 0.2, 0.95)
+	var shape: String = active_skill.aoe_shape.to_upper()
+	if shape == "CONE" and caster_screen_position != preview_screen_position:
+		var dir2: Vector2 = (preview_screen_position - caster_screen_position).normalized()
+		var dist2: float = maxf(40.0, caster_screen_position.distance_to(preview_screen_position))
+		var half_rad: float = deg_to_rad(clampf(active_skill.cone_angle_deg, 10.0, 170.0) * 0.5)
+		var pts := PackedVector2Array([caster_screen_position])
+		for step_i in range(13):
+			var ang: float = lerpf(-half_rad, half_rad, float(step_i) / 12.0)
+			pts.append(caster_screen_position + dir2.rotated(ang) * dist2)
+		draw_colored_polygon(pts, fill_col)
+		draw_polyline(pts + PackedVector2Array([caster_screen_position]), ring_col, 2.4)
+	elif shape == "LINE" and caster_screen_position != preview_screen_position:
+		var dir2: Vector2 = (preview_screen_position - caster_screen_position).normalized()
+		var perp := Vector2(-dir2.y, dir2.x) * clampf(active_skill.line_width * 9.0, 8.0, 48.0)
+		var pts := PackedVector2Array([
+			caster_screen_position + perp,
+			preview_screen_position + perp,
+			preview_screen_position - perp,
+			caster_screen_position - perp,
+		])
+		draw_colored_polygon(pts, fill_col)
+		draw_polyline(pts + PackedVector2Array([pts[0]]), ring_col, 2.4)
+	else:
+		draw_circle(preview_screen_position, preview_pixel_radius, fill_col)
+		draw_arc(preview_screen_position, preview_pixel_radius, 0.0, TAU, 40, ring_col, 2.5)

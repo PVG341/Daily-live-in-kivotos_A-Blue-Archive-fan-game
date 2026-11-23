@@ -42,7 +42,7 @@ D:\This PC\Project\test
 │   ├── hub/           # CameraModeState, SenseiController, ZoneTransitionManager, HubSceneController, DoorPortal, InteractiveDoor, InteractiveElevator, ElevatorCallButton, FloorVisibilityZone, InteractableBase, PickableItem, SittableChair, ToggleLight, CraftingChamberManager, OfficeDecorator, VisitorSpawner, ShittimChestSpaceManager
 │   ├── intimacy/      # GestureReceiver, BondProgressTracker, IntimacyManager
 │   ├── minigames/     # IngredientPrepStep, CookingManager, CookingStation
-│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, CombatHealthBarOverlay, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
+│   ├── combat/        # SelectionMath, UnitSelectionManager, RTSCamera3D, DamageResolver, CombatUnit, ProjectileManager, CoverPoint3D, EnemyUnit, EnemyAI, WaveSpawner, CombatEventManager, CostBarManager, EXSkillSystem, SkillTargetingOverlay, CombatHealthBarOverlay, DestructibleWall3D, DungeonLayoutGenerator, RoguelikeCardManager, DungeonRoomManager, BossUnit, TelegraphedAoE, TacticalTerrainZone, CombatRoomData, ChibiProxyFactory, SelectionBoxOverlay, CombatArenaController
 │   │   └── ai/        # RoleAIBase, TankerAI, DamageDealerAI, HealerAI, BufferAI
 │   └── ui/            # HUDManager, PhoneOSManager, PauseMenuManager, ModManagerUI, CombatHUD
 ├── shaders/           # cel_toon_shader.gdshader, outline_shader.gdshader
@@ -169,6 +169,14 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **Di chuyển & Xoay Camera Combat (`RTSCamera3D`):** Hỗ trợ đầy đủ WASD, phím mũi tên (`Arrow Keys`), kéo chuột giữa hoặc `Space + Chuột trái` (`pan_by_screen_delta()`), xoay `Q/E`, zoom cuộn chuột và phím `C` / `Home` để đưa camera về lại tâm đội hình.
 * **Cấu hình Tầm & Hình dạng Skill (`SkillData` & `SkillTargetingOverlay`):** Bổ sung `cast_range`, `min_range`, `aoe_shape` (`CIRCLE`/`CONE`/`LINE`), `cone_angle_deg`, `line_width`, `requires_los`, `pierce_walls`, `wall_damage`; giới hạn điểm nhắm vào trong `cast_range` kèm vòng `SkillRangeRing` 3D và chuyển màu cam-đỏ khi vượt tầm.
 * **Thanh máu 3D/2D, Boss HP Bar & Số sát thương bay (`ChibiProxyFactory` & `CombatHealthBarOverlay`):** Gắn `HPBar3D` trên từng đơn vị (tự xoay mặt theo camera), overlay thanh máu 2D, Boss HP bar trên đỉnh màn hình (kèm mốc chuyển pha 70% / 30%) và số sát thương/hồi máu bay lên theo thời gian thực.
+
+---
+
+## 9. Phase B — Line-of-Sight (LOS), Xuyên Tường & Tường Phá Hủy Được
+
+* **Phân mảnh Tường Phá hủy được (`DestructibleWall3D` & `CombatRoomData`):** Tự động tách các tường nhà, bunker, trụ cầu, parapet và chướng ngại vật trong phòng thành từng module `DestructibleWall3D` với `armor_tier` (`1` = gỗ/chắn nhẹ, `2` = tường gạch/nhà, `3` = bê tông/trụ cầu) và `max_hp`. Khi bị phá hủy sẽ tạo lỗ hổng (đống gạch vụn thấp `RubbleRoot`), tắt va chạm và mở đường di chuyển/tầm nhìn.
+* **Chặn Đạn, Kiểm tra Tầm Nhìn & Lực Xuyên (`ProjectileManager` & `CombatArenaController`):** Đạn bắn thường (`penetration_power = 0`) bị chặn bởi tường có `armor_tier > 0` (`🧱 BLOCKED`); đơn vị tự động vòng cạnh bên (`_move_unit_around_walls()`) để tìm góc bắn rõ LOS. Đạn hoặc skill có `penetration_power >= armor_tier` xuyên qua tường với sát thương suy giảm theo số lớp tường đã xuyên.
+* **Kỹ năng Đục Tường / Xuyên Tường (`SkillData` & `SkillTargetingOverlay`):** Bổ sung `[3] Shotgun Breach (2)` (hình nón `CONE`, đục tường tầm gần) và `[4] Railgun Beam (3)` (tia thẳng `LINE`, xuyên tường bê tông `armor_tier = 3`), cùng xem trước hình nón/tia 2D và cảnh báo đỏ khi bị tường chắn LOS.
 
 
 

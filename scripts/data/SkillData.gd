@@ -16,6 +16,7 @@ extends Resource
 @export var line_width: float = 2.2
 @export var requires_los: bool = true
 @export var pierce_walls: bool = false
+@export var penetration_power: int = 0
 @export var wall_damage: int = 0
 
 ## Returns true when desired_pos lies within [min_range, cast_range] on the XZ plane from origin_pos.

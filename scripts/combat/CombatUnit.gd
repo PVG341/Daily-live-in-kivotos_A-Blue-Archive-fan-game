@@ -15,6 +15,8 @@ var atk: int = 100
 var def: int = 50
 var speed: float = 5.0
 var attack_range: float = 10.0
+var penetration_power: int = 0
+var wall_damage: int = 18
 var is_alive: bool = true
 
 var has_player_order: bool = false

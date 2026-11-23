@@ -132,6 +132,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_begin_special_skill_targeting(0)
 			KEY_2:
 				_begin_special_skill_targeting(1)
+			KEY_3:
+				_begin_special_skill_targeting(2)
+			KEY_4:
+				_begin_special_skill_targeting(3)
 			KEY_H:
 				if selection_manager != null:
 					selection_manager.issue_hold_position()
@@ -181,9 +185,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			var caster_origin: Vector3 = _get_skill_caster_origin()
 			targeting_overlay.set_caster_origin(caster_origin)
 			var wpos: Vector3 = targeting_overlay.update_preview(mm.position, _get_isometric_camera(), 0.0)
-			var sk_rad: float = targeting_overlay.active_skill.aoe_radius if targeting_overlay.active_skill != null else 4.0
-			var sk_range: float = targeting_overlay.active_skill.cast_range if targeting_overlay.active_skill != null else 0.0
-			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true, targeting_overlay.is_target_in_range_flag)
+			var sk: SkillData = targeting_overlay.active_skill
+			if sk != null and sk.requires_los and not sk.pierce_walls and current_room_info != null:
+				var los_res: Dictionary = current_room_info.check_line_of_sight(caster_origin + Vector3(0.0, 0.7, 0.0), wpos + Vector3(0.0, 0.7, 0.0), sk.penetration_power)
+				targeting_overlay.is_los_blocked_flag = not bool(los_res.get("clear", true))
+			else:
+				targeting_overlay.is_los_blocked_flag = false
+			var sk_rad: float = sk.aoe_radius if sk != null else 4.0
+			var sk_range: float = sk.cast_range if sk != null else 0.0
+			var valid_preview: bool = targeting_overlay.is_target_in_range_flag and not (targeting_overlay.is_los_blocked_flag and sk != null and not sk.pierce_walls)
+			proxy_factory.update_skill_preview_disc(skill_preview_disc, wpos, sk_rad, true, valid_preview)
 			proxy_factory.update_skill_range_ring(skill_range_ring, caster_origin, sk_range, sk_range > 0.0)
 		elif _is_dragging_box:
 			if selection_box_overlay != null and selection_manager != null:
@@ -411,6 +422,10 @@ func _setup_default_squad() -> void:
 	sk_missile.cast_range = 24.0
 	sk_missile.min_range = 2.0
 	sk_missile.aoe_shape = "CIRCLE"
+	sk_missile.requires_los = false
+	sk_missile.pierce_walls = true
+	sk_missile.penetration_power = 2
+	sk_missile.wall_damage = 380
 	sk_missile.effect_type = "DAMAGE"
 
 	var sp_hibiki := StudentData.new()
@@ -428,6 +443,7 @@ func _setup_default_squad() -> void:
 	sk_heal.cast_range = 18.0
 	sk_heal.min_range = 0.0
 	sk_heal.aoe_shape = "CIRCLE"
+	sk_heal.requires_los = false
 	sk_heal.effect_type = "HEAL"
 
 	var sp_serina := StudentData.new()
@@ -436,8 +452,42 @@ func _setup_default_squad() -> void:
 	sp_serina.squad_slot = StudentData.SquadSlot.SPECIAL
 	sp_serina.skills = [sk_heal]
 
+	var sk_shotgun_breach := SkillData.new()
+	sk_shotgun_breach.id = "ex_shotgun_breach"
+	sk_shotgun_breach.name = "Shotgun Breach (2)"
+	sk_shotgun_breach.cost = 2
+	sk_shotgun_breach.cooldown = 5.0
+	sk_shotgun_breach.aoe_radius = 11.0
+	sk_shotgun_breach.cast_range = 11.0
+	sk_shotgun_breach.min_range = 0.0
+	sk_shotgun_breach.aoe_shape = "CONE"
+	sk_shotgun_breach.cone_angle_deg = 55.0
+	sk_shotgun_breach.requires_los = false
+	sk_shotgun_breach.pierce_walls = true
+	sk_shotgun_breach.penetration_power = 2
+	sk_shotgun_breach.wall_damage = 900
+	sk_shotgun_breach.effect_type = "DAMAGE"
+
+	var sk_railgun_beam := SkillData.new()
+	sk_railgun_beam.id = "ex_railgun_beam"
+	sk_railgun_beam.name = "Railgun Beam (3)"
+	sk_railgun_beam.cost = 3
+	sk_railgun_beam.cooldown = 7.0
+	sk_railgun_beam.aoe_radius = 28.0
+	sk_railgun_beam.cast_range = 28.0
+	sk_railgun_beam.min_range = 0.0
+	sk_railgun_beam.aoe_shape = "LINE"
+	sk_railgun_beam.line_width = 2.4
+	sk_railgun_beam.requires_los = false
+	sk_railgun_beam.pierce_walls = true
+	sk_railgun_beam.penetration_power = 3
+	sk_railgun_beam.wall_damage = 1200
+	sk_railgun_beam.effect_type = "DAMAGE"
+
 	special_students = [sp_hibiki, sp_serina]
 	ex_skill_system.set_special_students(special_students)
+	ex_skill_system.register_skill(sk_shotgun_breach)
+	ex_skill_system.register_skill(sk_railgun_beam)
 	_populate_special_skill_buttons()
 
 func _populate_special_skill_buttons() -> void:
@@ -524,6 +574,12 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 
 	var room_info := room_inst as CombatRoomDataScript
 	current_room_info = room_info
+	if room_info != null:
+		var walls: Array = room_info.setup_destructible_walls()
+		if projectile_manager != null:
+			projectile_manager.set_wall_obstacles(walls)
+	elif projectile_manager != null:
+		projectile_manager.set_wall_obstacles([])
 	var player_spawns: Array[Vector3] = room_info.get_player_spawn_positions() if room_info != null else []
 	var persisted_hp: Dictionary = room_manager.get_squad_persistent_state()
 
@@ -729,21 +785,24 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 			cp.claim(striker)
 			if cd <= 0.0 and not enemies.is_empty():
 				var nearest_e := enemies[0] as CombatUnitScript
-				var raw_dmg: int = striker.atk
-				var def_mult: float = float(_get_terrain_mods(nearest_e.position).get("damage_taken_multiplier", 1.0))
-				var final_dmg: int = maxi(1, int(round(float(raw_dmg) * def_mult)))
-				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), nearest_e.position + Vector3(0, 0.7, 0), 22.0, final_dmg, striker, nearest_e)
-				_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
+				if has_unit_los(striker, nearest_e):
+					var raw_dmg: int = striker.atk
+					var def_mult: float = float(_get_terrain_mods(nearest_e.position).get("damage_taken_multiplier", 1.0))
+					var final_dmg: int = maxi(1, int(round(float(raw_dmg) * def_mult)))
+					projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), nearest_e.position + Vector3(0, 0.7, 0), 22.0, final_dmg, striker, nearest_e, striker.penetration_power, striker.wall_damage)
+					_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 	elif (action == "ATTACK_TARGET" or action == "TAUNT_ENGAGE") and target is CombatUnitScript:
 		var enemy := target as CombatUnitScript
 		var dist: float = striker.position.distance_to(enemy.position)
 		if dist > eff_range:
 			_move_unit_toward(striker, enemy.position, delta)
+		elif not has_unit_los(striker, enemy):
+			_move_unit_around_walls(striker, enemy.position, delta)
 		elif cd <= 0.0:
 			var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
 			var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
 			dmg = maxi(1, int(round(float(dmg) * def_mult)))
-			projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, enemy)
+			projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, enemy, striker.penetration_power, striker.wall_damage)
 			_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 	elif action == "POSITION_AND_BUFF" and target is Vector3:
 		_move_unit_toward(striker, target as Vector3, delta)
@@ -771,11 +830,13 @@ func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, e
 			var dist: float = striker.position.distance_to(target_enemy.position)
 			if dist > eff_range:
 				_move_unit_toward(striker, target_enemy.position, delta)
+			elif not has_unit_los(striker, target_enemy):
+				_move_unit_around_walls(striker, target_enemy.position, delta)
 			elif cd <= 0.0:
 				var dmg: int = striker.damage_resolver.calculate_damage(striker, target_enemy, card_manager.get_active_buffs())
 				var def_mult: float = float(_get_terrain_mods(target_enemy.position).get("damage_taken_multiplier", 1.0))
 				dmg = maxi(1, int(round(float(dmg) * def_mult)))
-				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), target_enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, target_enemy)
+				projectile_manager.spawn_projectile(striker.position + Vector3(0, 0.7, 0), target_enemy.position + Vector3(0, 0.7, 0), 24.0, dmg, striker, target_enemy, striker.penetration_power, striker.wall_damage)
 				_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
 		"HOLD_POSITION":
 			pass
@@ -803,12 +864,56 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	var dist: float = enemy.position.distance_to(ally.position)
 	if action == "RUSH" and dist > eff_range:
 		_move_unit_toward(enemy, ally.position, delta)
+	elif dist <= eff_range and not has_unit_los(enemy, ally):
+		_move_unit_around_walls(enemy, ally.position, delta)
 	elif dist <= eff_range and cd <= 0.0:
 		var dmg: int = enemy.damage_resolver.calculate_damage(enemy, ally, [])
 		var ally_mult: float = float(_get_terrain_mods(ally.position).get("damage_taken_multiplier", 1.0))
 		dmg = maxi(1, int(round(float(dmg) * ally_mult)))
-		projectile_manager.spawn_projectile(enemy.position + Vector3(0, 0.7, 0), ally.position + Vector3(0, 0.7, 0), 18.0, dmg, enemy, ally)
+		projectile_manager.spawn_projectile(enemy.position + Vector3(0, 0.7, 0), ally.position + Vector3(0, 0.7, 0), 18.0, dmg, enemy, ally, enemy.penetration_power, enemy.wall_damage)
 		_unit_cooldowns[uid] = ENEMY_ATTACK_COOLDOWN
+
+## Returns true when attacker has clear Line-of-Sight (or sufficient wall penetration) to target.
+func has_unit_los(attacker: CombatUnitScript, target: CombatUnitScript) -> bool:
+	if attacker == null or target == null or current_room_info == null or not is_instance_valid(current_room_info):
+		return true
+	var res: Dictionary = current_room_info.check_line_of_sight(
+		attacker.position + Vector3(0.0, 0.7, 0.0),
+		target.position + Vector3(0.0, 0.7, 0.0),
+		attacker.penetration_power
+	)
+	return bool(res.get("clear", true))
+
+func _move_unit_around_walls(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
+	if current_room_info == null or not is_instance_valid(current_room_info):
+		_move_unit_toward(unit, target_pos, delta)
+		return
+	var los_res: Dictionary = current_room_info.check_line_of_sight(
+		unit.position + Vector3(0.0, 0.7, 0.0),
+		target_pos + Vector3(0.0, 0.7, 0.0),
+		unit.penetration_power
+	)
+	var blocker = los_res.get("blocker", null)
+	if blocker != null and is_instance_valid(blocker):
+		var b_center: Vector3 = blocker.get_world_center()
+		var to_target: Vector3 = Vector3(target_pos.x - b_center.x, 0.0, target_pos.z - b_center.z)
+		var fwd: Vector3 = to_target.normalized() if to_target.length() > 0.01 else Vector3(0.0, 0.0, -1.0)
+		var right := Vector3(-fwd.z, 0.0, fwd.x)
+		var sign_side: float = 1.0 if ((unit.position.x - b_center.x) * right.x + (unit.position.z - b_center.z) * right.z) >= 0.0 else -1.0
+		var half_span: float = maxf(blocker.wall_size.x, blocker.wall_size.z) * 0.5 + 1.4
+		var flank_pos := Vector3(b_center.x, unit.position.y, b_center.z) + right * (sign_side * half_span)
+		if Vector2(unit.position.x, unit.position.z).distance_to(Vector2(flank_pos.x, flank_pos.z)) > 0.4:
+			_move_unit_toward(unit, flank_pos, delta)
+			return
+	_move_unit_toward(unit, target_pos, delta)
+
+func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.42) -> Object:
+	if current_room_info == null or not is_instance_valid(current_room_info):
+		return null
+	for wall in current_room_info.get_wall_obstacles():
+		if wall != null and is_instance_valid(wall) and wall.intersects_point_xz(world_pos, padding):
+			return wall
+	return null
 
 func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float) -> void:
 	var flat_target := Vector3(target_pos.x, unit.position.y, target_pos.z)
@@ -819,7 +924,26 @@ func _move_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: float
 	var mods: Dictionary = _get_terrain_mods(unit.position)
 	var speed_mult: float = float(mods.get("speed_multiplier", 1.0))
 	var step: float = minf(dist, unit.speed * speed_mult * delta)
-	unit.position += (to_target / dist) * step
+	var dir: Vector3 = to_target / dist
+	var next_pos: Vector3 = unit.position + dir * step
+	if _find_wall_blocking_point(next_pos, 0.42) == null:
+		unit.position = next_pos
+	else:
+		var perp_a := Vector3(-dir.z, 0.0, dir.x)
+		var perp_b := Vector3(dir.z, 0.0, -dir.x)
+		var cand_a: Vector3 = unit.position + (dir * 0.35 + perp_a * 0.93).normalized() * step
+		var cand_b: Vector3 = unit.position + (dir * 0.35 + perp_b * 0.93).normalized() * step
+		if _find_wall_blocking_point(cand_a, 0.42) == null:
+			unit.position = cand_a
+		elif _find_wall_blocking_point(cand_b, 0.42) == null:
+			unit.position = cand_b
+		else:
+			var slide_a: Vector3 = unit.position + perp_a * step
+			var slide_b: Vector3 = unit.position + perp_b * step
+			if _find_wall_blocking_point(slide_a, 0.42) == null:
+				unit.position = slide_a
+			elif _find_wall_blocking_point(slide_b, 0.42) == null:
+				unit.position = slide_b
 	var new_elev: float = float(_get_terrain_mods(unit.position).get("elevation_offset", 0.0))
 	unit.position.y = lerpf(unit.position.y, new_elev, minf(1.0, delta * 10.0))
 
@@ -895,11 +1019,57 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 			if skill.is_point_inside_aoe(caster_origin, target_pos, s.position):
 				s.heal(450)
 		_update_status_banner("EX Skill Cast: %s (Healed allies!)" % skill.name)
+		return
+
+	# 1. Resolve structural damage / wall breaching inside skill AoE
+	var breached_count: int = 0
+	if current_room_info != null and skill.wall_damage > 0:
+		var shape: String = skill.aoe_shape.to_upper()
+		for wall in current_room_info.get_wall_obstacles():
+			if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
+				continue
+			var w_center: Vector3 = wall.get_world_center()
+			var hits_wall: bool = false
+			if shape == "LINE":
+				hits_wall = skill.is_point_inside_aoe(caster_origin, target_pos, w_center) or bool(wall.intersects_segment(caster_origin + Vector3(0.0, 0.7, 0.0), target_pos + Vector3(0.0, 0.7, 0.0), skill.line_width * 0.5).get("hit", false))
+			elif shape == "CONE":
+				hits_wall = skill.is_point_inside_aoe(caster_origin, target_pos, w_center) or bool(wall.intersects_segment(caster_origin + Vector3(0.0, 0.7, 0.0), target_pos + Vector3(0.0, 0.7, 0.0), 0.5).get("hit", false))
+			else:
+				hits_wall = wall.intersects_point_xz(target_pos, skill.aoe_radius)
+			if hits_wall:
+				var was_intact: bool = not wall.is_destroyed
+				wall.take_structural_damage(skill.wall_damage, skill.penetration_power)
+				if was_intact and wall.is_destroyed:
+					breached_count += 1
+					if health_bar_overlay != null:
+						health_bar_overlay.spawn_floating_text(w_center + Vector3(0.0, 1.6, 0.0), "💥 BREACH!", Color(1.0, 0.85, 0.2), true)
+
+	# 2. Resolve damage to enemies inside AoE (honoring LOS & pierce attenuation)
+	for unit in _get_living_enemies():
+		var e := unit as CombatUnitScript
+		if not skill.is_point_inside_aoe(caster_origin, target_pos, e.position):
+			continue
+		var final_dmg: int = 650
+		if current_room_info != null:
+			var los_info: Dictionary = current_room_info.check_line_of_sight(
+				caster_origin + Vector3(0.0, 0.7, 0.0),
+				e.position + Vector3(0.0, 0.7, 0.0),
+				skill.penetration_power
+			)
+			var is_clear: bool = bool(los_info.get("clear", true))
+			if skill.requires_los and not skill.pierce_walls and not is_clear:
+				continue
+			if skill.pierce_walls:
+				if not is_clear:
+					continue
+				var pierced_count: int = (los_info.get("penetrated_walls", []) as Array).size()
+				if pierced_count > 0:
+					final_dmg = maxi(1, int(round(float(final_dmg) * pow(0.8, float(pierced_count)))))
+		e.take_damage(final_dmg, self)
+
+	if breached_count > 0:
+		_update_status_banner("EX Skill Cast: %s (BREACHED %d WALL%s!)" % [skill.name, breached_count, "S" if breached_count > 1 else ""])
 	else:
-		for unit in _get_living_enemies():
-			var e := unit as CombatUnitScript
-			if skill.is_point_inside_aoe(caster_origin, target_pos, e.position):
-				e.take_damage(650, self)
 		_update_status_banner("EX Skill Cast: %s!" % skill.name)
 
 func _finalize_box_selection(end_pos: Vector2) -> void:
@@ -1272,6 +1442,8 @@ func _connect_signals() -> void:
 			selection_manager.order_issued.connect(_on_order_issued)
 	if ex_skill_system != null and not ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.connect(_on_ex_skill_activated)
+	if projectile_manager != null and not projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
+		projectile_manager.projectile_wall_hit.connect(_on_projectile_wall_hit)
 
 	if card_draft_panel != null:
 		for i in range(3):
@@ -1310,6 +1482,16 @@ func _disconnect_signals() -> void:
 			selection_manager.order_issued.disconnect(_on_order_issued)
 	if ex_skill_system != null and is_instance_valid(ex_skill_system) and ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.disconnect(_on_ex_skill_activated)
+	if projectile_manager != null and is_instance_valid(projectile_manager) and projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
+		projectile_manager.projectile_wall_hit.disconnect(_on_projectile_wall_hit)
+
+func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
+	if health_bar_overlay == null:
+		return
+	if wall_destroyed:
+		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 1.2, 0.0), "💥 BREACH!", Color(1.0, 0.85, 0.2), true)
+	elif not penetrated:
+		health_bar_overlay.spawn_floating_text(hit_pos + Vector3(0.0, 0.9, 0.0), "🧱 BLOCKED", Color(0.85, 0.72, 0.52), false)
 
 	if card_draft_panel != null and is_instance_valid(card_draft_panel):
 		for i in range(3):

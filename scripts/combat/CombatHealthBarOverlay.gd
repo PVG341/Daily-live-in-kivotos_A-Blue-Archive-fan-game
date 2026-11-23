@@ -17,24 +17,31 @@ func update_bars(p_unit_bars: Array[Dictionary], p_boss_bar: Dictionary = {}) ->
 	boss_bar = p_boss_bar.duplicate(true)
 	queue_redraw()
 
-## Spawns a floating damage or heal number anchored in 3D world space.
-func spawn_floating_number(world_pos: Vector3, amount: int, is_heal: bool = false, is_heavy: bool = false) -> void:
-	if amount <= 0:
+## Spawns a custom floating combat text label (e.g., "BREACH!", "BLOCKED") anchored in 3D world space.
+func spawn_floating_text(world_pos: Vector3, text: String, color: Color = Color(1.0, 0.80, 0.16), is_heavy: bool = false) -> void:
+	if text.is_empty():
 		return
 	var jitter_x: float = float((floating_numbers.size() % 5) - 2) * 0.22
 	var start_world := world_pos + Vector3(jitter_x, 0.0, 0.0)
-	var col: Color = Color(0.32, 1.0, 0.52) if is_heal else (Color(1.0, 0.80, 0.16) if is_heavy else Color(1.0, 0.30, 0.26))
 	floating_numbers.append({
 		"world_pos": start_world,
 		"screen_pos": Vector2(start_world.x, start_world.z),
-		"text": ("+%d" % amount) if is_heal else ("-%d" % amount),
-		"color": col,
+		"text": text,
+		"color": color,
 		"elapsed": 0.0,
 		"duration": 0.9,
 		"rise_height": 1.4,
 		"is_heavy": is_heavy,
 	})
 	queue_redraw()
+
+## Spawns a floating damage or heal number anchored in 3D world space.
+func spawn_floating_number(world_pos: Vector3, amount: int, is_heal: bool = false, is_heavy: bool = false) -> void:
+	if amount <= 0:
+		return
+	var col: Color = Color(0.32, 1.0, 0.52) if is_heal else (Color(1.0, 0.80, 0.16) if is_heavy else Color(1.0, 0.30, 0.26))
+	var txt: String = ("+%d" % amount) if is_heal else ("-%d" % amount)
+	spawn_floating_text(world_pos, txt, col, is_heavy)
 
 ## Advances active floating numbers and updates their projected screen positions.
 func tick_floating_numbers(delta: float, camera: Camera3D = null) -> void:
