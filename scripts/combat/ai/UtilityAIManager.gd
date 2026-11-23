@@ -26,8 +26,25 @@ func evaluate_unit_utility(
 	var compliance_mult: float = 1.0 + clampf(float(maxi(1, bond_level)) * 0.005, 0.0, 0.5)
 	var unit_role: int = StudentData.CombatRole.DAMAGE_DEALER
 	var udata: Variant = unit.get(&"unit_data")
+	var student_id: String = str(unit.name) if unit is Node else ""
 	if udata != null and udata is StudentData:
 		unit_role = (udata as StudentData).role
+		if not (udata as StudentData).id.is_empty():
+			student_id = (udata as StudentData).id
+	var holding_fire: bool = bool(unit.get(&"is_holding_fire")) if (&"is_holding_fire" in unit) else false
+
+	# Resolve per-unit zone & target assignments (fallback cleanly to legacy directives)
+	var unit_zone: Dictionary = {}
+	if directives != null:
+		if directives.has_method(&"get_zone_for_unit") and not student_id.is_empty():
+			unit_zone = directives.get_zone_for_unit(student_id)
+		elif bool(directives.get("has_tactical_zone")):
+			unit_zone = {
+				"id": 0,
+				"type": "DEFENSE" if stance == STANCE_DEFENSIVE else "ASSAULT",
+				"center": directives.get("tactical_zone_center"),
+				"radius": float(directives.get("tactical_zone_radius")),
+			}
 
 	var best: Dictionary = {
 		"action": "IDLE",
@@ -96,31 +113,103 @@ func evaluate_unit_utility(
 				"status_tag": "🛡️ RÚT LUI",
 			}
 
-	# 4. Commander Tactical Zone / Advance Vector directive
-	if directives != null and bool(directives.get("has_tactical_zone")):
-		var zone_center: Vector3 = directives.get("tactical_zone_center")
-		var zone_rad: float = maxf(2.5, float(directives.get("tactical_zone_radius")))
-		var dist_to_zone: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(zone_center.x, zone_center.z))
-		if dist_to_zone > zone_rad:
-			var zone_score: float = 60.0 * compliance_mult
-			if bool(directives.get("has_advance_vector")) or stance == STANCE_DEFENSIVE:
-				zone_score += 16.0
-			var spread: Vector2 = _unit_spread_dir(unit) * minf(2.6, zone_rad * 0.42)
-			var move_target := Vector3(zone_center.x + spread.x, unit_pos.y, zone_center.z + spread.y)
-			if zone_score > float(best["score"]):
-				best = {
-					"action": "ADVANCE_TO_ZONE",
-					"target": null,
-					"target_pos": move_target,
-					"score": zone_score,
-					"status_tag": "🚩 TIẾN VÀO VÙNG",
-				}
+	var living_enemies: Array = []
+	for e in enemies:
+		if e != null and is_instance_valid(e) and _is_alive(e):
+			living_enemies.append(e)
 
-	# 5. Commander Priority Target directive
+	# 4. Per-unit Tactical Zone directives (ASSAULT, DEFENSE, FREESHOT) with entry hysteresis
 	var prio_target: Object = null
-	if directives != null and directives.has_method(&"get_valid_priority_target"):
-		prio_target = directives.get_valid_priority_target()
-	if prio_target != null and _is_alive(prio_target):
+	if directives != null:
+		if directives.has_method(&"get_target_for_unit") and not student_id.is_empty():
+			prio_target = directives.get_target_for_unit(student_id)
+		elif directives.has_method(&"get_valid_priority_target"):
+			prio_target = directives.get_valid_priority_target()
+	var valid_prio: Object = prio_target if (prio_target != null and is_instance_valid(prio_target) and _is_alive(prio_target)) else null
+
+	var in_defense_lock: bool = false
+	if not unit_zone.is_empty():
+		var zone_id: int = int(unit_zone.get("id", 0))
+		var zone_type: String = str(unit_zone.get("type", "ASSAULT"))
+		var zone_center: Vector3 = unit_zone.get("center", Vector3.ZERO)
+		var zone_rad: float = maxf(2.5, float(unit_zone.get("radius", 6.5)))
+		var dist_to_zone: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(zone_center.x, zone_center.z))
+		var inner_anchor: Vector3 = _get_zone_inner_anchor(unit, unit_pos, allies, zone_center, zone_rad, covers, zone_type)
+
+		if zone_type == "FREESHOT":
+			var freeshot_enemy: Object = _pick_enemy_in_zone(zone_center, zone_rad, living_enemies, valid_prio)
+			var freeshot_score: float = 80.0 * compliance_mult
+			if freeshot_score > float(best["score"]):
+				best = {
+					"action": "FREESHOT_BOMBARD",
+					"target": freeshot_enemy,
+					"target_pos": zone_center,
+					"zone_radius": zone_rad,
+					"score": freeshot_score,
+					"status_tag": "💣 BẮN PHÁ VÙNG",
+				}
+		elif zone_type == "DEFENSE":
+			in_defense_lock = true
+			var z_meta := StringName("_in_zone_%d" % zone_id)
+			var was_inside: bool = unit.has_meta(z_meta) and bool(unit.get_meta(z_meta))
+			if was_inside and dist_to_zone > zone_rad * 0.90:
+				was_inside = false
+				unit.set_meta(z_meta, false)
+			elif not was_inside and dist_to_zone <= zone_rad * 0.65:
+				was_inside = true
+				unit.set_meta(z_meta, true)
+
+			if not was_inside:
+				var def_advance_score: float = 82.0 * compliance_mult
+				if def_advance_score > float(best["score"]):
+					best = {
+						"action": "ADVANCE_TO_ZONE",
+						"target": null,
+						"target_pos": inner_anchor,
+						"score": def_advance_score,
+						"status_tag": "🛡️ VÀO VÙNG PHÒNG THỦ",
+					}
+			else:
+				var def_enemy: Object = valid_prio if valid_prio != null else _pick_best_enemy(unit, unit_pos, living_enemies, room_info) if not living_enemies.is_empty() else null
+				var def_score: float = 76.0 * compliance_mult
+				if def_enemy != null and def_score > float(best["score"]):
+					best = {
+						"action": "DEFEND_ZONE_ENGAGE",
+						"target": def_enemy,
+						"target_pos": inner_anchor,
+						"zone_center": zone_center,
+						"zone_radius": zone_rad,
+						"score": def_score,
+						"status_tag": "🛡️ PHÒNG THỦ & BẮN",
+					}
+				elif 64.0 > float(best["score"]):
+					best = {
+						"action": "HOLD_DEFENSE_ZONE",
+						"target": null,
+						"target_pos": inner_anchor,
+						"score": 64.0,
+						"status_tag": "🛡️ GIỮ VỊ TRÍ",
+					}
+		else:
+			# ASSAULT zone: guide unit deep inside once; once cleared entry, allow free pursuit out
+			var z_meta := StringName("_in_zone_%d" % zone_id)
+			var reached_assault: bool = unit.has_meta(z_meta) and bool(unit.get_meta(z_meta))
+			if not reached_assault and dist_to_zone <= zone_rad * 0.65:
+				reached_assault = true
+				unit.set_meta(z_meta, true)
+			if not reached_assault and dist_to_zone > zone_rad * 0.65:
+				var zone_score: float = 70.0 * compliance_mult
+				if zone_score > float(best["score"]):
+					best = {
+						"action": "ADVANCE_TO_ZONE",
+						"target": null,
+						"target_pos": inner_anchor,
+						"score": zone_score,
+						"status_tag": "🚩 TIẾN VÀO VÙNG",
+					}
+
+	# 5. Commander Priority Target directive (skipped when locked inside Defense perimeter so unit won't chase outside)
+	if not in_defense_lock and valid_prio != null:
 		var prio_score: float = 68.0 * compliance_mult
 		if stance == STANCE_ASSAULT:
 			prio_score += 15.0
@@ -129,20 +218,15 @@ func evaluate_unit_utility(
 		if prio_score > float(best["score"]):
 			best = {
 				"action": "FOCUS_PRIORITY_TARGET",
-				"target": prio_target,
-				"target_pos": _get_pos(prio_target),
+				"target": valid_prio,
+				"target_pos": _get_pos(valid_prio),
 				"score": prio_score,
 				"status_tag": "🎯 MỤC TIÊU CHỈ ĐỊNH",
 			}
 
 	# 6. Seek nearby CoverPoint3D & engage visible enemy
-	var living_enemies: Array = []
-	for e in enemies:
-		if e != null and is_instance_valid(e) and _is_alive(e):
-			living_enemies.append(e)
-
-	if not living_enemies.is_empty():
-		var cover_pick: Variant = _find_best_cover(unit, unit_pos, covers, directives, living_enemies, room_info)
+	if not living_enemies.is_empty() and not in_defense_lock:
+		var cover_pick: Variant = _find_best_cover(unit, unit_pos, covers, directives, living_enemies, room_info, unit_zone)
 		if cover_pick != null:
 			var cover_score: float = 46.0
 			if stance == STANCE_DEFENSIVE:
@@ -189,6 +273,11 @@ func evaluate_unit_utility(
 				"status_tag": "⚔️ TỰ ĐỘNG ĐÁNH",
 			}
 
+	if holding_fire:
+		var base_tag: String = str(best.get("status_tag", ""))
+		best["holding_fire"] = true
+		best["status_tag"] = "🚫 GIỮ HỎA LỰC" if base_tag.is_empty() else "🚫 %s" % base_tag
+
 	return best
 
 func _pick_best_enemy(unit: Object, unit_pos: Vector3, living_enemies: Array, room_info: Object) -> Object:
@@ -204,12 +293,53 @@ func _pick_best_enemy(unit: Object, unit_pos: Vector3, living_enemies: Array, ro
 			chosen = enemy
 	return chosen
 
-func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, directives: Object, living_enemies: Array = [], room_info: Object = null) -> Variant:
+func _get_zone_inner_anchor(unit: Object, unit_pos: Vector3, allies: Array, zone_center: Vector3, zone_rad: float, covers: Array, zone_type: String) -> Vector3:
+	if zone_type == "DEFENSE":
+		var best_cover: Variant = null
+		var best_d: float = INF
+		for cp in covers:
+			if cp == null or not is_instance_valid(cp):
+				continue
+			var occ: Variant = cp.get(&"occupant")
+			if bool(cp.get(&"is_occupied")) and occ != unit and occ != null and is_instance_valid(occ) and _is_alive(occ):
+				continue
+			var cp_pos: Vector3 = _get_pos(cp)
+			if Vector2(cp_pos.x, cp_pos.z).distance_to(Vector2(zone_center.x, zone_center.z)) <= zone_rad * 0.72:
+				var d: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(cp_pos.x, cp_pos.z))
+				if d < best_d:
+					best_d = d
+					best_cover = cp
+		if best_cover != null:
+			return _get_pos(best_cover)
+
+	var slot_idx: int = allies.find(unit)
+	if slot_idx < 0:
+		slot_idx = abs(unit.get_instance_id()) % 4
+	var angle: float = (PI * 0.25) + float(slot_idx % 4) * (TAU / 4.0)
+	var offset_len: float = clampf(zone_rad * 0.42, 1.4, 2.8)
+	return Vector3(zone_center.x + cos(angle) * offset_len, unit_pos.y, zone_center.z + sin(angle) * offset_len)
+
+func _pick_enemy_in_zone(zone_center: Vector3, zone_rad: float, living_enemies: Array, prio_target: Object) -> Object:
+	if prio_target != null and is_instance_valid(prio_target) and _is_alive(prio_target):
+		var p_pos: Vector3 = _get_pos(prio_target)
+		if Vector2(p_pos.x, p_pos.z).distance_to(Vector2(zone_center.x, zone_center.z)) <= zone_rad + 2.0:
+			return prio_target
+	var best_e: Object = null
+	var best_d: float = INF
+	for e in living_enemies:
+		var e_pos: Vector3 = _get_pos(e)
+		var d: float = Vector2(e_pos.x, e_pos.z).distance_to(Vector2(zone_center.x, zone_center.z))
+		if d <= zone_rad + 1.5 and d < best_d:
+			best_d = d
+			best_e = e
+	return best_e
+
+func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, directives: Object, living_enemies: Array = [], room_info: Object = null, unit_zone: Dictionary = {}) -> Variant:
 	var best_cp: Variant = null
 	var best_score: float = -INF
-	var has_zone: bool = directives != null and bool(directives.get("has_tactical_zone"))
-	var zone_center: Vector3 = directives.get("tactical_zone_center") if has_zone else Vector3.ZERO
-	var zone_rad: float = float(directives.get("tactical_zone_radius")) if has_zone else 999.0
+	var has_zone: bool = not unit_zone.is_empty()
+	var zone_center: Vector3 = unit_zone.get("center", Vector3.ZERO) if has_zone else Vector3.ZERO
+	var zone_rad: float = float(unit_zone.get("radius", 999.0)) if has_zone else 999.0
 	var stance: int = int(directives.get("current_stance")) if (directives != null and &"current_stance" in directives) else STANCE_BALANCED
 	var pen: int = int(unit.get(&"penetration_power")) if (&"penetration_power" in unit) else 0
 	var atk_range: float = maxf(6.0, float(unit.get(&"attack_range")) if (&"attack_range" in unit) else 10.0)
