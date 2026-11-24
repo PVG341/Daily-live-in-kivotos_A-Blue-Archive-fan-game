@@ -424,6 +424,10 @@ func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, _directive
 		var sc: float = 20.0 - d
 		if occ == unit:
 			sc += 6.0
+		if str(unit.get(&"weapon_class")) == "SR" and room_info != null and is_instance_valid(room_info) and room_info.has_method(&"get_terrain_modifiers_at"):
+			var cp_mods: Dictionary = room_info.get_terrain_modifiers_at(cp_pos)
+			if float(cp_mods.get("range_bonus_multiplier", 1.0)) > 1.0:
+				sc += 10.0
 		if sc > best_score:
 			best_score = sc
 			best_cp = cp

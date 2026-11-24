@@ -23,9 +23,13 @@ func evaluate_simple(enemy_dict: Dictionary, player_units: Array) -> Dictionary:
 	var attack_range: float = float(enemy_dict.get("attack_range", 10.0))
 
 	match behavior:
-		"AGGRESSIVE":
+		"AGGRESSIVE", "SHIELD_HEAVY":
 			return {"action": "RUSH", "target": nearest}
 		"DEFENSIVE":
+			return {"action": "HOLD_AND_SHOOT", "target": nearest}
+		"SNIPER":
+			if nearest_dist < 5.5:
+				return {"action": "KITE_BACK", "target": nearest}
 			return {"action": "HOLD_AND_SHOOT", "target": nearest}
 		"PATROL":
 			if nearest_dist <= attack_range:
@@ -43,6 +47,9 @@ func evaluate(owner_enemy: Variant, player_units: Array) -> Dictionary:
 	if owner_enemy is Object:
 		if not is_instance_valid(owner_enemy):
 			return {"action": "IDLE", "target": null}
+		var alerted_val: Variant = owner_enemy.get(&"is_alerted")
+		if alerted_val != null and not bool(alerted_val):
+			return {"action": "UNALERTED", "target": null}
 		var behavior_val: Variant = owner_enemy.get(&"behavior")
 		var range_val: Variant = owner_enemy.get(&"attack_range")
 		var enemy_dict: Dictionary = {

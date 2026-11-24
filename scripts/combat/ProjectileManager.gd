@@ -5,6 +5,7 @@ extends Node
 const MAX_PROJECTILE_LIFETIME: float = 15.0
 
 signal projectile_wall_hit(wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool)
+signal projectile_impact(impact_pos: Vector3, target_unit: Object, damage: int, shielded: bool, source: Object)
 
 var active_projectiles: Array[Dictionary] = []
 var wall_obstacles: Array = []
@@ -76,8 +77,24 @@ func tick_projectiles(delta: float) -> int:
 			proj["position"] = target_pos
 			proj["active"] = false
 			var target_unit: Variant = proj.get("target_unit", null)
-			if target_unit != null and is_instance_valid(target_unit) and target_unit.has_method("take_damage"):
-				target_unit.take_damage(int(proj["damage"]), proj.get("source", null))
+			if target_unit != null and is_instance_valid(target_unit):
+				var raw_src: Variant = proj.get("source", null)
+				var src_obj: Object = raw_src if (typeof(raw_src) == TYPE_OBJECT and is_instance_valid(raw_src)) else null
+				var dmg_amt: int = int(proj["damage"])
+				var dealt: int = 0
+				var is_shielded: bool = false
+				if target_unit.has_method("take_directional_damage"):
+					var dir_res: Dictionary = target_unit.take_directional_damage(
+						dmg_amt,
+						src_obj,
+						proj.get("origin", target_pos),
+						int(proj.get("penetration_power", 0))
+					)
+					dealt = int(dir_res.get("damage", 0))
+					is_shielded = bool(dir_res.get("shielded", false))
+				elif target_unit.has_method("take_damage"):
+					dealt = int(target_unit.take_damage(dmg_amt, src_obj))
+				projectile_impact.emit(target_pos, target_unit, dealt, is_shielded, src_obj)
 			proj["source"] = null
 			proj["target_unit"] = null
 			hits_resolved += 1

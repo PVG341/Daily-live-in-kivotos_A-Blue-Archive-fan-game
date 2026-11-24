@@ -17,6 +17,11 @@ var speed: float = 5.0
 var attack_range: float = 10.0
 var penetration_power: int = 0
 var wall_damage: int = 18
+var weapon_class: String = "AR" # "SG", "SR", "AR", "ARTILLERY", "HG"
+var attack_cooldown: float = 1.2
+var projectile_speed: float = 24.0
+var frontal_shield_ratio: float = 0.0
+var facing_dir: Vector3 = Vector3(0.0, 0.0, -1.0)
 var is_alive: bool = true
 var is_holding_fire: bool = false
 var is_aoe_attacker: bool = false
@@ -49,6 +54,39 @@ func setup(data: StudentData) -> void:
 	current_order_type = ""
 	order_target_position = Vector3.ZERO
 	order_target_node = null
+
+## Updates planar XZ facing_dir toward target_pos and rotates VisualRoot/FacingPivot if present.
+func update_facing_toward(target_pos: Vector3) -> void:
+	var diff := Vector2(target_pos.x - position.x, target_pos.z - position.z)
+	if diff.length() <= 0.05:
+		return
+	var dir2: Vector2 = diff.normalized()
+	facing_dir = Vector3(dir2.x, 0.0, dir2.y)
+	var pivot := get_node_or_null("VisualRoot/FacingPivot") as Node3D
+	if pivot != null:
+		pivot.rotation.y = atan2(dir2.x, dir2.y)
+
+## Applies direct damage, mitigating frontal attacks when frontal_shield_ratio > 0 and penetration < 2.
+func take_directional_damage(
+	amount: int,
+	source: Object = null,
+	attacker_pos: Vector3 = Vector3.INF,
+	incoming_penetration: int = 0
+) -> Dictionary:
+	if not is_alive or amount <= 0:
+		return {"damage": 0, "shielded": false}
+	var final_amount: int = amount
+	var was_shielded: bool = false
+	if frontal_shield_ratio > 0.0 and incoming_penetration < 2 and attacker_pos != Vector3.INF:
+		var my_pos: Vector3 = global_position if is_inside_tree() else position
+		var to_atk := Vector2(attacker_pos.x - my_pos.x, attacker_pos.z - my_pos.z)
+		var f_xz := Vector2(facing_dir.x, facing_dir.z)
+		if to_atk.length() > 0.05 and f_xz.length() > 0.05:
+			if f_xz.normalized().dot(to_atk.normalized()) >= 0.35:
+				final_amount = maxi(1, int(round(float(amount) * clampf(1.0 - frontal_shield_ratio, 0.1, 1.0))))
+				was_shielded = true
+	var dealt: int = take_damage(final_amount, source)
+	return {"damage": dealt, "shielded": was_shielded}
 
 ## Applies direct damage clamped to 0, emits hp_changed, and triggers death at 0 HP.
 func take_damage(amount: int, _source: Object = null) -> int:

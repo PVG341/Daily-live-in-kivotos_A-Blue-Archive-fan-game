@@ -6,36 +6,37 @@
 script = ExtResource("1_combat_hud")
 
 [node name="WaveLabel" type="Label" parent="."]
-offset_left = 24.0
-offset_top = 24.0
-offset_right = 180.0
-offset_bottom = 52.0
+offset_left = 20.0
+offset_top = 18.0
+offset_right = 170.0
+offset_bottom = 44.0
 text = "Wave 1"
 
 [node name="BuffRow" type="HBoxContainer" parent="."]
-offset_left = 24.0
-offset_top = 60.0
-offset_right = 460.0
-offset_bottom = 92.0
+offset_left = 20.0
+offset_top = 52.0
+offset_right = 310.0
+offset_bottom = 78.0
+mouse_filter = 2
 theme_override_constants/separation = 8
 
 [node name="SelectedUnitsLabel" type="Label" parent="."]
-offset_left = 24.0
-offset_top = 98.0
-offset_right = 620.0
-offset_bottom = 126.0
+offset_left = 20.0
+offset_top = 82.0
+offset_right = 560.0
+offset_bottom = 108.0
 text = "Chưa chọn học sinh (Kéo chuột trái chọn nhóm)"
 
 [node name="StrikerPortraits" type="HBoxContainer" parent="."]
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -120.0
-offset_right = 480.0
-offset_bottom = -24.0
+offset_left = 18.0
+offset_top = -96.0
+offset_right = 598.0
+offset_bottom = -16.0
 grow_vertical = 0
-theme_override_constants/separation = 12
+theme_override_constants/separation = 8
 
 [node name="SpecialSkillButtons" type="HBoxContainer" parent="."]
 anchors_preset = 3
@@ -43,13 +44,13 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -460.0
-offset_top = -152.0
-offset_right = -24.0
-offset_bottom = -76.0
+offset_left = -476.0
+offset_top = -148.0
+offset_right = -18.0
+offset_bottom = -56.0
 grow_horizontal = 0
 grow_vertical = 0
-theme_override_constants/separation = 12
+theme_override_constants/separation = 8
 
 [node name="CostProgressBar" type="ProgressBar" parent="."]
 anchors_preset = 3
@@ -57,11 +58,12 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -460.0
-offset_top = -60.0
-offset_right = -24.0
-offset_bottom = -24.0
+offset_left = -476.0
+offset_top = -46.0
+offset_right = -18.0
+offset_bottom = -16.0
 grow_horizontal = 0
 grow_vertical = 0
 max_value = 10.0
 value = 0.0
+show_percentage = false

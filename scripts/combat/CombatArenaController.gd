@@ -30,6 +30,7 @@ const CombatHealthBarOverlayScript := preload("res://scripts/combat/CombatHealth
 const CommanderDirectiveSystemScript := preload("res://scripts/combat/CommanderDirectiveSystem.gd")
 const UtilityAIManagerScript := preload("res://scripts/combat/ai/UtilityAIManager.gd")
 const EncounterZoneManagerScript := preload("res://scripts/combat/EncounterZoneManager.gd")
+const CombatFeelManagerScript := preload("res://scripts/combat/CombatFeelManager.gd")
 
 const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
@@ -52,6 +53,7 @@ var event_manager: CombatEventManagerScript
 var ex_skill_system: EXSkillSystemScript
 var commander_system: CommanderDirectiveSystemScript
 var utility_ai: UtilityAIManagerScript
+var feel_manager: CombatFeelManagerScript
 var seamless_mode: bool = true
 
 var tanker_ai: TankerAIScript
@@ -102,6 +104,7 @@ var _drag_start_pos: Vector2 = Vector2.ZERO
 var _last_tool_hotkey: int = 0
 var _last_tool_hotkey_ms: int = -1000
 var _rest_supply_pending: bool = false
+var _last_slow_mo_ui_state: bool = false
 var _initialized: bool = false
 
 func _init() -> void:
@@ -119,6 +122,8 @@ func _ready() -> void:
 		camera_rig.bounds_max = Vector2(55.0, 55.0)
 		camera_rig.adjust_zoom(6.0)
 	if effects_container != null:
+		if feel_manager != null:
+			feel_manager.effects_container = effects_container
 		skill_preview_disc = proxy_factory.create_skill_preview_disc()
 		effects_container.add_child(skill_preview_disc)
 		skill_range_ring = proxy_factory.create_skill_range_ring()
@@ -138,6 +143,8 @@ func _exit_tree() -> void:
 		projectile_manager.clear_projectiles()
 	if encounter_zone_manager != null:
 		encounter_zone_manager.clear_battlefield()
+	if feel_manager != null:
+		feel_manager.clear_effects()
 	_clear_active_aoes()
 	_clear_active_zone_discs()
 	_unit_flank_memory.clear()
@@ -148,7 +155,15 @@ func _exit_tree() -> void:
 		selection_manager.selected_units.clear()
 
 func _physics_process(delta: float) -> void:
-	var scale_mult: float = commander_system.get_effective_time_scale() if commander_system != null else 1.0
+	var hit_stop_mult: float = 1.0
+	if feel_manager != null:
+		feel_manager.tick_effects(delta)
+		hit_stop_mult = feel_manager.get_hit_stop_scale()
+	var scale_mult: float = (commander_system.get_effective_time_scale() if commander_system != null else 1.0) * hit_stop_mult
+	if combat_hud != null and commander_system != null:
+		if _last_slow_mo_ui_state != commander_system.tactical_slow_mo:
+			_last_slow_mo_ui_state = commander_system.tactical_slow_mo
+			combat_hud.set_slow_mo_active(_last_slow_mo_ui_state)
 	step_combat(delta * scale_mult)
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -207,7 +222,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if targeting_overlay != null and targeting_overlay.is_targeting:
 			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-				targeting_overlay.set_caster_origin(_get_skill_caster_origin())
+				targeting_overlay.set_caster_origin(_get_skill_caster_origin(targeting_overlay.active_skill))
 				var iso_cam := _get_isometric_camera()
 				targeting_overlay.confirm_target(mb.position, iso_cam, 0.0)
 				get_viewport().set_input_as_handled()
@@ -244,7 +259,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if targeting_overlay != null and targeting_overlay.is_targeting:
-			var caster_origin: Vector3 = _get_skill_caster_origin()
+			var caster_origin: Vector3 = _get_skill_caster_origin(targeting_overlay.active_skill)
 			targeting_overlay.set_caster_origin(caster_origin)
 			var wpos: Vector3 = targeting_overlay.update_preview(mm.position, _get_isometric_camera(), 0.0)
 			var sk: SkillData = targeting_overlay.active_skill
@@ -340,6 +355,16 @@ func step_combat(delta: float) -> void:
 		ex_skill_system.tick_cooldowns(delta)
 		if combat_hud != null:
 			combat_hud.update_cost(ex_skill_system.cost_bar.current_cost, ex_skill_system.cost_bar.max_cost)
+			var dead_caster_ids: Array[String] = []
+			for su in squad_units:
+				if su != null and is_instance_valid(su) and not su.is_alive and su.unit_data != null:
+					dead_caster_ids.append(su.unit_data.id)
+			combat_hud.update_ex_skill_states(
+				ex_skill_system.registered_skills,
+				ex_skill_system.cost_bar.current_cost,
+				ex_skill_system.cooldown_remaining,
+				dead_caster_ids
+			)
 
 	# 2. Striker units AI & player orders
 	var living_enemies: Array = _get_living_enemies()
@@ -454,6 +479,7 @@ func _setup_child_managers() -> void:
 	event_manager = _ensure_child(CombatEventManagerScript, "CombatEventManager") as CombatEventManagerScript
 	ex_skill_system = _ensure_child(EXSkillSystemScript, "EXSkillSystem") as EXSkillSystemScript
 	commander_system = _ensure_child(CommanderDirectiveSystemScript, "CommanderDirectiveSystem") as CommanderDirectiveSystemScript
+	feel_manager = _ensure_child(CombatFeelManagerScript, "CombatFeelManager") as CombatFeelManagerScript
 	tanker_ai = _ensure_child(TankerAIScript, "TankerAI") as TankerAIScript
 	dps_ai = _ensure_child(DamageDealerAIScript, "DamageDealerAI") as DamageDealerAIScript
 	healer_ai = _ensure_child(HealerAIScript, "HealerAI") as HealerAIScript
@@ -518,6 +544,7 @@ func _setup_default_squad() -> void:
 	sk_missile.penetration_power = 2
 	sk_missile.wall_damage = 380
 	sk_missile.effect_type = "DAMAGE"
+	sk_missile.caster_name = "Hibiki"
 
 	var sp_hibiki := StudentData.new()
 	sp_hibiki.id = "hibiki"
@@ -536,6 +563,7 @@ func _setup_default_squad() -> void:
 	sk_heal.aoe_shape = "CIRCLE"
 	sk_heal.requires_los = false
 	sk_heal.effect_type = "HEAL"
+	sk_heal.caster_name = "Serina"
 
 	var sp_serina := StudentData.new()
 	sp_serina.id = "serina"
@@ -558,6 +586,8 @@ func _setup_default_squad() -> void:
 	sk_shotgun_breach.penetration_power = 2
 	sk_shotgun_breach.wall_damage = 900
 	sk_shotgun_breach.effect_type = "DAMAGE"
+	sk_shotgun_breach.caster_id = "hoshino"
+	sk_shotgun_breach.caster_name = "Hoshino"
 
 	var sk_railgun_beam := SkillData.new()
 	sk_railgun_beam.id = "ex_railgun_beam"
@@ -574,6 +604,8 @@ func _setup_default_squad() -> void:
 	sk_railgun_beam.penetration_power = 3
 	sk_railgun_beam.wall_damage = 1200
 	sk_railgun_beam.effect_type = "DAMAGE"
+	sk_railgun_beam.caster_id = "shiroko"
+	sk_railgun_beam.caster_name = "Shiroko"
 
 	special_students = [sp_hibiki, sp_serina]
 	ex_skill_system.set_special_students(special_students)
@@ -595,6 +627,8 @@ func _populate_special_skill_buttons() -> void:
 		var btn := Button.new()
 		btn.text = "[%d] %s" % [i + 1, sk.name]
 		btn.focus_mode = Control.FOCUS_NONE
+		if combat_hud.has_method(&"style_ex_skill_button"):
+			combat_hud.style_ex_skill_button(btn, i, sk)
 		var idx: int = i
 		btn.pressed.connect(func() -> void: _begin_special_skill_targeting(idx))
 		btn_box.add_child(btn)
@@ -608,10 +642,10 @@ func _spawn_persistent_strikers() -> void:
 	squad_units.clear()
 
 	var striker_defs: Array[Dictionary] = [
-		{"id": "hoshino", "name": "Hoshino", "role": StudentData.CombatRole.TANKER, "hp": 2200, "atk": 140, "def": 140, "speed": 4.2, "range": 7.5, "color": Color(0.95, 0.55, 0.72), "halo": Color(1.0, 0.65, 0.85)},
-		{"id": "shiroko", "name": "Shiroko", "role": StudentData.CombatRole.DAMAGE_DEALER, "hp": 1250, "atk": 220, "def": 60, "speed": 5.5, "range": 11.5, "color": Color(0.32, 0.72, 0.96), "halo": Color(0.35, 0.88, 1.0)},
-		{"id": "serika", "name": "Serika", "role": StudentData.CombatRole.DAMAGE_DEALER, "hp": 1180, "atk": 235, "def": 55, "speed": 5.5, "range": 11.0, "color": Color(0.28, 0.28, 0.36), "halo": Color(0.95, 0.35, 0.45)},
-		{"id": "hanae", "name": "Hanae", "role": StudentData.CombatRole.HEALER, "hp": 1100, "atk": 130, "def": 55, "speed": 4.8, "range": 10.0, "color": Color(0.95, 0.82, 0.45), "halo": Color(0.55, 1.0, 0.65)},
+		{"id": "hoshino", "name": "Hoshino", "role": StudentData.CombatRole.TANKER, "weapon_class": "SG", "hp": 2200, "atk": 155, "def": 140, "speed": 4.2, "range": 8.0, "atk_cd": 1.05, "proj_speed": 26.0, "pen": 1, "wall_dmg": 45, "shield": 0.40, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.55, 0.72), "halo": Color(1.0, 0.65, 0.85)},
+		{"id": "shiroko", "name": "Shiroko", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "SR", "hp": 1250, "atk": 260, "def": 60, "speed": 5.3, "range": 16.5, "atk_cd": 1.55, "proj_speed": 38.0, "pen": 2, "wall_dmg": 55, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.32, 0.72, 0.96), "halo": Color(0.35, 0.88, 1.0)},
+		{"id": "serika", "name": "Serika", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "ARTILLERY", "hp": 1180, "atk": 195, "def": 55, "speed": 5.0, "range": 13.5, "atk_cd": 1.40, "proj_speed": 22.0, "pen": 1, "wall_dmg": 65, "shield": 0.0, "aoe": true, "aoe_rad": 2.8, "color": Color(0.28, 0.28, 0.36), "halo": Color(0.95, 0.35, 0.45)},
+		{"id": "hanae", "name": "Hanae", "role": StudentData.CombatRole.HEALER, "hp": 1100, "weapon_class": "HG", "atk": 130, "def": 55, "speed": 4.8, "range": 10.0, "atk_cd": 1.15, "proj_speed": 24.0, "pen": 0, "wall_dmg": 18, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.82, 0.45), "halo": Color(0.55, 1.0, 0.65)},
 	]
 
 	var initial_hp_map: Dictionary = {}
@@ -630,14 +664,26 @@ func _spawn_persistent_strikers() -> void:
 		var unit := CombatUnitScript.new()
 		unit.name = sd.student_name
 		unit.setup(sd)
+		unit.weapon_class = str(def_dict["weapon_class"])
+		unit.attack_cooldown = float(def_dict["atk_cd"])
+		unit.projectile_speed = float(def_dict["proj_speed"])
+		unit.penetration_power = int(def_dict["pen"])
+		unit.wall_damage = int(def_dict["wall_dmg"])
+		unit.frontal_shield_ratio = float(def_dict["shield"])
+		unit.is_aoe_attacker = bool(def_dict["aoe"])
+		unit.basic_aoe_radius = float(def_dict["aoe_rad"])
 		unit.order_completed.connect(_on_striker_order_completed)
 		unit.unit_died.connect(_on_striker_died)
 		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0, sd.attack_range)
+		if unit.frontal_shield_ratio > 0.0:
+			proxy_factory.attach_front_shield_visual(unit, 1.0, unit.facing_dir)
 		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp, false)
 		_bind_unit_hp_feedback(unit)
 		units_container.add_child(unit)
 		squad_units.append(unit)
 		initial_hp_map[sd.id] = unit.current_hp
+		if combat_hud != null and combat_hud.has_method(&"update_striker_meta"):
+			combat_hud.update_striker_meta(sd.id, sd.student_name, unit.weapon_class, def_dict["color"])
 
 	room_manager.set_squad_hp(initial_hp_map)
 	if commander_system != null:
@@ -658,6 +704,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	_invalidate_ai_cache()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
+	if feel_manager != null:
+		feel_manager.clear_effects()
 	if health_bar_overlay != null:
 		health_bar_overlay.clear_all()
 
@@ -771,6 +819,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	var difficulty: int = int(wave_def.get("difficulty", 1))
 	var enemy_spawns: Array[Vector3] = room_info.get_enemy_spawn_positions() if room_info != null else []
 
+	var sector_alerted_default: bool = (room_index == 0 or not use_seamless)
+
 	if room_type == "BOSS":
 		var boss := BossUnitScript.new()
 		boss.name = "Hieronymus_Proxy"
@@ -780,13 +830,21 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		boss.def = 80
 		boss.speed = 3.0
 		boss.attack_range = 13.0
+		boss.is_alerted = sector_alerted_default
+		boss.detection_radius = 34.0
+		boss.facing_dir = Vector3(0.0, 0.0, 1.0)
 		boss.position = room_info.get_boss_spawn_position() if room_info != null else Vector3(0.0, 0.0, -9.5)
+		boss.patrol_origin = boss.position
 		proxy_factory.attach_unit_visuals(boss, "BOSS", Color(0.75, 0.15, 0.2), Color(1.0, 0.2, 0.2), 1.65)
 		proxy_factory.update_unit_hp_label(boss, "BOSS", boss.current_hp, boss.max_hp, true)
 		_bind_unit_hp_feedback(boss)
 		boss.unit_died.connect(_on_enemy_died)
 		boss.phase_changed.connect(func(new_phase: int) -> void:
 			_update_status_banner("BOSS PHASE %d! Watch the red AoE zones!" % new_phase)
+			if feel_manager != null:
+				feel_manager.trigger_feedback("LARGE", boss.position, camera_rig)
+				feel_manager.spawn_explosion_burst(boss.position, 4.0, Color(1.0, 0.22, 0.22), 0.45)
+				feel_manager.play_sfx("explosion", -4.0)
 		)
 		enemies_container.add_child(boss)
 		enemy_units.append(boss)
@@ -794,22 +852,70 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	var grunt_count: int = enemy_count if room_type != "BOSS" else mini(2, maxi(0, enemy_count - 1))
 	for j in range(grunt_count):
 		var grunt := EnemyUnitScript.new()
-		grunt.name = "Automaton_%d" % (j + 1)
-		grunt.enemy_type = "ELITE" if room_type == "ELITE" else "GRUNT"
-		grunt.max_hp = (900 if room_type == "ELITE" else 550) + difficulty * 120
+		var arch_slot: int = (room_index + j) % 3
+		grunt.is_alerted = sector_alerted_default
+		grunt.facing_dir = Vector3(0.0, 0.0, 1.0)
+		var base_scale: float = 1.18 if room_type == "ELITE" else 0.96
+		var col: Color = Color(0.6, 0.25, 0.85) if room_type == "ELITE" else Color(0.45, 0.45, 0.52)
+		var attach_shield: bool = false
+
+		match arch_slot:
+			1:
+				grunt.name = "ShieldHeavy_%d" % (j + 1)
+				grunt.enemy_type = "SHIELD_HEAVY"
+				grunt.weapon_class = "SG"
+				grunt.behavior = "SHIELD_HEAVY"
+				grunt.max_hp = (1450 if room_type == "ELITE" else 950) + difficulty * 180
+				grunt.atk = (105 if room_type == "ELITE" else 80) + difficulty * 12
+				grunt.def = 85
+				grunt.speed = 3.2
+				grunt.attack_range = 7.5
+				grunt.attack_cooldown = 1.5
+				grunt.projectile_speed = 20.0
+				grunt.frontal_shield_ratio = 0.55
+				grunt.detection_radius = 24.0
+				base_scale *= 1.12
+				col = Color(0.28, 0.36, 0.48) if room_type != "ELITE" else Color(0.44, 0.28, 0.62)
+				attach_shield = true
+			2:
+				grunt.name = "SniperDrone_%d" % (j + 1)
+				grunt.enemy_type = "SNIPER"
+				grunt.weapon_class = "SR"
+				grunt.behavior = "SNIPER"
+				grunt.max_hp = (720 if room_type == "ELITE" else 460) + difficulty * 90
+				grunt.atk = (160 if room_type == "ELITE" else 120) + difficulty * 18
+				grunt.def = 30
+				grunt.speed = 3.6
+				grunt.attack_range = 17.5
+				grunt.attack_cooldown = 2.05
+				grunt.projectile_speed = 36.0
+				grunt.penetration_power = 1
+				grunt.detection_radius = 30.0
+				base_scale *= 0.92
+				col = Color(0.24, 0.52, 0.68) if room_type != "ELITE" else Color(0.68, 0.28, 0.72)
+			_:
+				grunt.name = "Automaton_%d" % (j + 1)
+				grunt.enemy_type = "ELITE" if room_type == "ELITE" else "GRUNT"
+				grunt.weapon_class = "AR"
+				grunt.behavior = "DEFENSIVE" if (j % 2 == 1) else "AGGRESSIVE"
+				grunt.max_hp = (900 if room_type == "ELITE" else 550) + difficulty * 120
+				grunt.atk = (115 if room_type == "ELITE" else 85) + difficulty * 15
+				grunt.def = 40
+				grunt.speed = 3.8
+				grunt.attack_range = 10.5
+				grunt.attack_cooldown = ENEMY_ATTACK_COOLDOWN
+				grunt.projectile_speed = 20.0
+				grunt.detection_radius = 26.0
+
 		grunt.current_hp = grunt.max_hp
-		grunt.atk = (115 if room_type == "ELITE" else 85) + difficulty * 15
-		grunt.def = 40
-		grunt.speed = 3.8
-		grunt.attack_range = 10.5
-		grunt.behavior = "DEFENSIVE" if (j % 2 == 1) else "AGGRESSIVE"
 		if j < enemy_spawns.size():
 			grunt.position = enemy_spawns[j]
 		else:
 			grunt.position = Vector3(-4.0 + float(j) * 3.0, 0.0, -7.5)
-		var scale_f: float = 1.2 if room_type == "ELITE" else 0.95
-		var col: Color = Color(0.6, 0.25, 0.85) if room_type == "ELITE" else Color(0.45, 0.45, 0.52)
-		proxy_factory.attach_unit_visuals(grunt, grunt.name, col, Color(1.0, 0.4, 0.3), scale_f)
+		grunt.patrol_origin = grunt.position
+		proxy_factory.attach_unit_visuals(grunt, grunt.name, col, Color(1.0, 0.4, 0.3), base_scale, grunt.attack_range)
+		if attach_shield:
+			proxy_factory.attach_front_shield_visual(grunt, base_scale, grunt.facing_dir)
 		proxy_factory.update_unit_hp_label(grunt, grunt.name, grunt.current_hp, grunt.max_hp, true)
 		_bind_unit_hp_feedback(grunt)
 		grunt.unit_died.connect(_on_enemy_died)
@@ -1060,28 +1166,63 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 func _fire_striker_shot(striker: CombatUnitScript, enemy: CombatUnitScript, uid: int) -> void:
 	if striker.is_holding_fire:
 		return
+	striker.update_facing_toward(enemy.position)
 	var dmg: int = striker.damage_resolver.calculate_damage(striker, enemy, card_manager.get_active_buffs())
 	var def_mult: float = float(_get_terrain_mods(enemy.position).get("damage_taken_multiplier", 1.0))
 	dmg = maxi(1, int(round(float(dmg) * def_mult)))
+	var origin_pt: Vector3 = striker.position + Vector3(0.0, 0.7, 0.0)
+	var target_pt: Vector3 = enemy.position + Vector3(0.0, 0.7, 0.0)
 	projectile_manager.spawn_projectile(
-		striker.position + Vector3(0.0, 0.7, 0.0),
-		enemy.position + Vector3(0.0, 0.7, 0.0),
-		24.0,
+		origin_pt,
+		target_pt,
+		maxf(10.0, striker.projectile_speed),
 		dmg,
 		striker,
 		enemy,
 		striker.penetration_power,
 		striker.wall_damage
 	)
-	_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
+	if striker.is_aoe_attacker:
+		var splash_r: float = maxf(2.0, striker.basic_aoe_radius)
+		for other_e in _get_living_enemies():
+			var oe := other_e as CombatUnitScript
+			if oe != null and oe != enemy and Vector2(oe.position.x, oe.position.z).distance_to(Vector2(enemy.position.x, enemy.position.z)) <= splash_r:
+				var splash_dmg: int = maxi(1, int(round(float(dmg) * 0.60)))
+				oe.take_damage(splash_dmg, striker)
+		if feel_manager != null:
+			feel_manager.spawn_explosion_burst(enemy.position, splash_r, Color(1.0, 0.48, 0.18), 0.28)
+			feel_manager.trigger_feedback("SMALL", enemy.position, camera_rig)
+	if feel_manager != null:
+		var t_col := Color(0.95, 0.92, 0.52, 0.88)
+		var t_width: float = 0.08
+		var sfx_id: String = "shot_ar"
+		match striker.weapon_class:
+			"SG":
+				t_col = Color(1.0, 0.72, 0.28, 0.92)
+				t_width = 0.11
+				sfx_id = "shot_sg"
+			"SR":
+				t_col = Color(0.28, 0.92, 1.0, 0.95)
+				t_width = 0.10
+				sfx_id = "shot_sr"
+			"ARTILLERY":
+				t_col = Color(1.0, 0.45, 0.20, 0.92)
+				t_width = 0.13
+				sfx_id = "explosion"
+		feel_manager.spawn_tracer(origin_pt, target_pt, t_col, t_width, 0.14)
+		feel_manager.play_sfx(sfx_id, -10.0)
+	_unit_cooldowns[uid] = maxf(0.25, striker.attack_cooldown)
 
 func _fire_freeshot_shell(striker: CombatUnitScript, impact_pos: Vector3, uid: int) -> void:
 	if striker.is_holding_fire:
 		return
+	striker.update_facing_toward(impact_pos)
 	var splash_rad: float = maxf(2.2, striker.basic_aoe_radius)
+	var origin_pt: Vector3 = striker.position + Vector3(0.0, 0.7, 0.0)
+	var target_pt: Vector3 = impact_pos + Vector3(0.0, 0.2, 0.0)
 	projectile_manager.spawn_projectile(
-		striker.position + Vector3(0.0, 0.7, 0.0),
-		impact_pos + Vector3(0.0, 0.2, 0.0),
+		origin_pt,
+		target_pt,
 		20.0,
 		0,
 		striker,
@@ -1099,6 +1240,11 @@ func _fire_freeshot_shell(striker: CombatUnitScript, impact_pos: Vector3, uid: i
 			dmg = maxi(1, int(round(float(dmg) * 0.85)))
 			eu.take_damage(dmg, striker)
 			hit_any = true
+	if feel_manager != null:
+		feel_manager.spawn_tracer(origin_pt, target_pt, Color(1.0, 0.45, 0.78, 0.92), 0.14, 0.16)
+		feel_manager.spawn_explosion_burst(impact_pos, splash_rad, Color(1.0, 0.45, 0.75), 0.32)
+		feel_manager.trigger_feedback("MEDIUM", impact_pos, camera_rig)
+		feel_manager.play_sfx("explosion", -7.0)
 	if health_bar_overlay != null:
 		health_bar_overlay.spawn_floating_text(
 			impact_pos + Vector3(0.0, 1.0, 0.0),
@@ -1106,7 +1252,7 @@ func _fire_freeshot_shell(striker: CombatUnitScript, impact_pos: Vector3, uid: i
 			Color(1.0, 0.55, 0.82),
 			hit_any
 		)
-	_unit_cooldowns[uid] = STRIKER_ATTACK_COOLDOWN
+	_unit_cooldowns[uid] = maxf(0.25, striker.attack_cooldown)
 
 func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, eff_range: float) -> void:
 	var uid: int = striker.get_instance_id()
@@ -1138,6 +1284,26 @@ func _execute_player_order(striker: CombatUnitScript, delta: float, cd: float, e
 		"HOLD_FIRE":
 			striker.has_player_order = false
 
+func _alert_enemy_squad(trigger_enemy: EnemyUnitScript) -> void:
+	if trigger_enemy == null or not is_instance_valid(trigger_enemy):
+		return
+	var newly_alerted: bool = not trigger_enemy.is_alerted
+	trigger_enemy.alert()
+	for e in enemy_units:
+		if not (e is EnemyUnitScript) or not is_instance_valid(e):
+			continue
+		var other := e as EnemyUnitScript
+		if not other.is_alive or other == trigger_enemy:
+			continue
+		if not other.is_alerted and other.position.distance_to(trigger_enemy.position) <= 12.0:
+			other.alert()
+			newly_alerted = true
+	if newly_alerted:
+		if health_bar_overlay != null:
+			health_bar_overlay.spawn_floating_text(trigger_enemy.position + Vector3(0.0, 1.35, 0.0), "❗ PHÁT HIỆN!", Color(1.0, 0.38, 0.22), true)
+		if feel_manager != null:
+			feel_manager.play_sfx("alert", -6.0)
+
 func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	var uid: int = enemy.get_instance_id()
 	var cd: float = maxf(0.0, float(_unit_cooldowns.get(uid, 0.0)) - delta)
@@ -1149,22 +1315,56 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	if not is_equal_approx(enemy.position.y, target_elev):
 		enemy.position.y = lerpf(enemy.position.y, target_elev, minf(1.0, delta * 8.0))
 
+	if not enemy.is_alerted:
+		for unit in allies:
+			if not (unit is CombatUnitScript):
+				continue
+			var candidate := unit as CombatUnitScript
+			if candidate.is_alive and enemy.position.distance_to(candidate.position) <= enemy.detection_radius:
+				_alert_enemy_squad(enemy)
+				break
+		if not enemy.is_alerted:
+			return
+
 	var decision: Dictionary = enemy_ai.evaluate(enemy, allies)
 	var action: String = str(decision.get("action", "IDLE"))
 	var target: Variant = decision.get("target", null)
-	if not (target is CombatUnitScript) or action == "IDLE":
+	if not (target is CombatUnitScript) or action == "IDLE" or action == "UNALERTED":
 		return
 
 	var ally := target as CombatUnitScript
+	enemy.update_facing_toward(ally.position)
 	var dist: float = enemy.position.distance_to(ally.position)
+
+	if action == "KITE_BACK":
+		var away: Vector3 = Vector3(enemy.position.x - ally.position.x, 0.0, enemy.position.z - ally.position.z)
+		var away_dir: Vector3 = away.normalized() if away.length() > 0.05 else Vector3(0.0, 0.0, 1.0)
+		var kite_target: Vector3 = enemy.position + away_dir * 4.5
+		if enemy.patrol_origin.distance_to(kite_target) > 12.0:
+			var from_origin: Vector3 = Vector3(kite_target.x - enemy.patrol_origin.x, 0.0, kite_target.z - enemy.patrol_origin.z)
+			if from_origin.length() > 0.05:
+				kite_target = enemy.patrol_origin + from_origin.normalized() * 12.0
+		if enemy.position.distance_to(kite_target) > 0.45:
+			_navigate_unit_toward(enemy, kite_target, delta)
+			return
+
 	if (action == "RUSH" and dist > eff_range) or (dist <= eff_range and not has_unit_los(enemy, ally)):
 		_navigate_unit_toward(enemy, ally.position, delta)
 	elif dist <= eff_range and cd <= 0.0:
 		var dmg: int = enemy.damage_resolver.calculate_damage(enemy, ally, [])
 		var ally_mult: float = float(_get_terrain_mods(ally.position).get("damage_taken_multiplier", 1.0))
 		dmg = maxi(1, int(round(float(dmg) * ally_mult)))
-		projectile_manager.spawn_projectile(enemy.position + Vector3(0, 0.7, 0), ally.position + Vector3(0, 0.7, 0), 18.0, dmg, enemy, ally, enemy.penetration_power, enemy.wall_damage)
-		_unit_cooldowns[uid] = ENEMY_ATTACK_COOLDOWN
+		var muzzle_pos: Vector3 = enemy.position + Vector3(0.0, 0.7, 0.0)
+		var impact_est: Vector3 = ally.position + Vector3(0.0, 0.7, 0.0)
+		var proj_speed: float = enemy.projectile_speed if enemy.projectile_speed > 0.0 else 18.0
+		projectile_manager.spawn_projectile(muzzle_pos, impact_est, proj_speed, dmg, enemy, ally, enemy.penetration_power, enemy.wall_damage)
+		var atk_cd: float = enemy.attack_cooldown if enemy.attack_cooldown > 0.0 else ENEMY_ATTACK_COOLDOWN
+		_unit_cooldowns[uid] = atk_cd
+		if feel_manager != null:
+			var tracer_w: float = 0.12 if enemy.enemy_type == "SNIPER" else 0.075
+			feel_manager.spawn_tracer(muzzle_pos, impact_est, Color(1.0, 0.28, 0.25, 0.85), tracer_w, 0.13)
+			var sfx_id: String = "shot_sr" if enemy.enemy_type == "SNIPER" else ("shot_sg" if enemy.enemy_type == "SHIELD_HEAVY" else "shot_ar")
+			feel_manager.play_sfx(sfx_id, -13.0)
 
 ## Returns true when attacker has clear Line-of-Sight (or sufficient wall penetration) to target.
 func has_unit_los(attacker: CombatUnitScript, target: CombatUnitScript) -> bool:
@@ -1401,6 +1601,12 @@ func _tick_active_aoes(delta: float) -> void:
 		aoe.tick(delta, living_strikers)
 		if aoe.has_detonated:
 			any_detonated = true
+			var burst_pos: Vector3 = aoe.position
+			var burst_rad: float = maxf(2.5, aoe.radius)
+			if feel_manager != null:
+				feel_manager.spawn_explosion_burst(burst_pos, burst_rad, Color(1.0, 0.35, 0.12), 0.38)
+				feel_manager.trigger_feedback("LARGE", burst_pos, camera_rig)
+				feel_manager.play_sfx("explosion", -5.0)
 			if aoe.get_parent() != null:
 				aoe.get_parent().remove_child(aoe)
 			aoe.free()
@@ -1421,14 +1627,33 @@ func _resolve_random_event(evt: Dictionary) -> void:
 		for unit in _get_living_strikers():
 			(unit as CombatUnitScript).heal(120)
 
+func _find_caster_striker(caster_id: String) -> CombatUnitScript:
+	if caster_id.is_empty():
+		return null
+	var cid_low: String = caster_id.to_lower()
+	for unit in squad_units:
+		if not (unit is CombatUnitScript) or not is_instance_valid(unit):
+			continue
+		var cu := unit as CombatUnitScript
+		var uid: String = cu.unit_data.id.to_lower() if cu.unit_data != null else ""
+		if uid == cid_low or cu.name.to_lower() == cid_low:
+			return cu
+	return null
+
 func _begin_special_skill_targeting(skill_index: int) -> void:
 	if ex_skill_system == null or targeting_overlay == null:
 		return
 	if skill_index < 0 or skill_index >= ex_skill_system.registered_skills.size():
 		return
 	var sk := ex_skill_system.registered_skills[skill_index]
+	if not sk.caster_id.is_empty() and not squad_units.is_empty():
+		var caster_unit: CombatUnitScript = _find_caster_striker(sk.caster_id)
+		if caster_unit == null or not caster_unit.is_alive:
+			var label_name: String = sk.caster_name if not sk.caster_name.is_empty() else sk.caster_id.capitalize()
+			_update_status_banner("Không thể dùng %s: %s đã bị hạ gục!" % [sk.name, label_name])
+			return
 	if ex_skill_system.cost_bar.current_cost >= float(sk.cost) and not ex_skill_system.is_skill_on_cooldown(sk):
-		var origin: Vector3 = _get_skill_caster_origin()
+		var origin: Vector3 = _get_skill_caster_origin(sk)
 		targeting_overlay.set_caster_origin(origin)
 		targeting_overlay.begin_targeting(sk)
 		proxy_factory.update_skill_range_ring(skill_range_ring, origin, sk.cast_range, sk.cast_range > 0.0)
@@ -1453,19 +1678,48 @@ func _on_ex_target_cancelled() -> void:
 func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 	if skill == null:
 		return
-	var caster_origin: Vector3 = _get_skill_caster_origin()
+	var caster_unit: CombatUnitScript = _find_caster_striker(skill.caster_id)
+	if not skill.caster_id.is_empty() and not squad_units.is_empty() and (caster_unit == null or not caster_unit.is_alive):
+		return
+	if caster_unit != null and caster_unit.is_alive:
+		caster_unit.update_facing_toward(target_pos)
+	var caster_origin: Vector3 = _get_skill_caster_origin(skill)
 	if skill.effect_type == "HEAL":
 		for unit in _get_living_strikers():
 			var s := unit as CombatUnitScript
 			if skill.is_point_inside_aoe(caster_origin, target_pos, s.position):
 				s.heal(450)
+		if feel_manager != null:
+			feel_manager.spawn_explosion_burst(target_pos, maxf(1.5, skill.aoe_radius), Color(0.25, 0.95, 0.55), 0.36)
+			feel_manager.trigger_feedback("SMALL", target_pos, camera_rig)
+			feel_manager.play_sfx("heal", -6.0)
 		_update_status_banner("EX Skill Cast: %s (Healed allies!)" % skill.name)
 		return
+
+	var shape: String = skill.aoe_shape.to_upper()
+	if feel_manager != null:
+		if shape == "LINE":
+			var ray_delta := Vector3(target_pos.x - caster_origin.x, 0.0, target_pos.z - caster_origin.z)
+			var ray_len: float = maxf(ray_delta.length(), skill.cast_range)
+			var ray_dir: Vector3 = ray_delta.normalized() if ray_delta.length() > 0.05 else Vector3(0.0, 0.0, -1.0)
+			var beam_start: Vector3 = caster_origin + Vector3(0.0, 0.72, 0.0)
+			var beam_end: Vector3 = caster_origin + ray_dir * ray_len + Vector3(0.0, 0.72, 0.0)
+			feel_manager.spawn_tracer(beam_start, beam_end, Color(0.2, 0.92, 1.0, 0.96), maxf(0.26, skill.line_width * 0.22), 0.28)
+			feel_manager.spawn_explosion_burst(target_pos, 1.8, Color(0.25, 0.92, 1.0), 0.28)
+			feel_manager.trigger_feedback("MEDIUM", target_pos, camera_rig)
+			feel_manager.play_sfx("shot_sr", -4.0)
+		elif shape == "CONE":
+			feel_manager.spawn_cone_flash(caster_origin, target_pos, maxf(skill.aoe_radius, 5.5), Color(1.0, 0.75, 0.22), 0.26)
+			feel_manager.trigger_feedback("MEDIUM", target_pos, camera_rig)
+			feel_manager.play_sfx("shot_sg", -3.0)
+		else:
+			feel_manager.spawn_explosion_burst(target_pos, maxf(skill.aoe_radius, 3.0), Color(1.0, 0.55, 0.16), 0.40)
+			feel_manager.trigger_feedback("LARGE", target_pos, camera_rig)
+			feel_manager.play_sfx("explosion", -4.0)
 
 	# 1. Resolve structural damage / wall breaching inside skill AoE
 	var breached_count: int = 0
 	if current_room_info != null and skill.wall_damage > 0:
-		var shape: String = skill.aoe_shape.to_upper()
 		var all_walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
 		for wall in all_walls:
 			if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
@@ -1483,8 +1737,16 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 				wall.take_structural_damage(skill.wall_damage, skill.penetration_power)
 				if was_intact and wall.is_destroyed:
 					breached_count += 1
+					if feel_manager != null:
+						feel_manager.spawn_explosion_burst(w_center, 2.2, Color(1.0, 0.72, 0.25), 0.30)
 					if health_bar_overlay != null:
 						health_bar_overlay.spawn_floating_text(w_center + Vector3(0.0, 1.6, 0.0), "💥 BREACH!", Color(1.0, 0.85, 0.2), true)
+
+	if breached_count > 0:
+		_invalidate_ai_cache()
+		if feel_manager != null:
+			feel_manager.play_sfx("breach", -4.0)
+			feel_manager.trigger_feedback("LARGE", target_pos, camera_rig)
 
 	# 2. Resolve damage to enemies inside AoE (honoring LOS & pierce attenuation)
 	for unit in _get_living_enemies():
@@ -1508,6 +1770,10 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 				if pierced_count > 0:
 					final_dmg = maxi(1, int(round(float(final_dmg) * pow(0.8, float(pierced_count)))))
 		e.take_damage(final_dmg, self)
+		if feel_manager != null:
+			feel_manager.trigger_unit_hit_flash(e)
+		if e is EnemyUnitScript:
+			_alert_enemy_squad(e as EnemyUnitScript)
 
 	if breached_count > 0:
 		_update_status_banner("EX Skill Cast: %s (BREACHED %d WALL%s!)" % [skill.name, breached_count, "S" if breached_count > 1 else ""])
@@ -2166,7 +2432,11 @@ func _on_unit_hp_changed(current: int, _max_val: int, unit: CombatUnitScript) ->
 		else:
 			health_bar_overlay.spawn_floating_number(anchor, diff, true, false)
 
-func _get_skill_caster_origin() -> Vector3:
+func _get_skill_caster_origin(skill: SkillData = null) -> Vector3:
+	if skill != null and not skill.caster_id.is_empty():
+		var caster_unit: CombatUnitScript = _find_caster_striker(skill.caster_id)
+		if caster_unit != null and caster_unit.is_alive:
+			return caster_unit.global_position if caster_unit.is_inside_tree() else caster_unit.position
 	if selection_manager != null:
 		selection_manager.prune_invalid_units()
 		for u in selection_manager.selected_units:
@@ -2267,8 +2537,11 @@ func _connect_signals() -> void:
 			selection_manager.order_issued.connect(_on_order_issued)
 	if ex_skill_system != null and not ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.connect(_on_ex_skill_activated)
-	if projectile_manager != null and not projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
-		projectile_manager.projectile_wall_hit.connect(_on_projectile_wall_hit)
+	if projectile_manager != null:
+		if not projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
+			projectile_manager.projectile_wall_hit.connect(_on_projectile_wall_hit)
+		if not projectile_manager.projectile_impact.is_connected(_on_projectile_impact):
+			projectile_manager.projectile_impact.connect(_on_projectile_impact)
 	if commander_system != null:
 		if not commander_system.directive_changed.is_connected(_on_directive_changed):
 			commander_system.directive_changed.connect(_on_directive_changed)
@@ -2321,8 +2594,11 @@ func _disconnect_signals() -> void:
 			selection_manager.order_issued.disconnect(_on_order_issued)
 	if ex_skill_system != null and is_instance_valid(ex_skill_system) and ex_skill_system.skill_activated.is_connected(_on_ex_skill_activated):
 		ex_skill_system.skill_activated.disconnect(_on_ex_skill_activated)
-	if projectile_manager != null and is_instance_valid(projectile_manager) and projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
-		projectile_manager.projectile_wall_hit.disconnect(_on_projectile_wall_hit)
+	if projectile_manager != null and is_instance_valid(projectile_manager):
+		if projectile_manager.projectile_wall_hit.is_connected(_on_projectile_wall_hit):
+			projectile_manager.projectile_wall_hit.disconnect(_on_projectile_wall_hit)
+		if projectile_manager.projectile_impact.is_connected(_on_projectile_impact):
+			projectile_manager.projectile_impact.disconnect(_on_projectile_impact)
 	if commander_system != null and is_instance_valid(commander_system):
 		if commander_system.directive_changed.is_connected(_on_directive_changed):
 			commander_system.directive_changed.disconnect(_on_directive_changed)
@@ -2354,9 +2630,25 @@ func _disconnect_signals() -> void:
 		if hub_btn != null and hub_btn.pressed.is_connected(_on_return_hub_pressed):
 			hub_btn.pressed.disconnect(_on_return_hub_pressed)
 
+func _on_projectile_impact(impact_pos: Vector3, target_unit: Variant, damage: int, shielded: bool, _source: Variant) -> void:
+	if feel_manager != null and typeof(target_unit) == TYPE_OBJECT and is_instance_valid(target_unit) and target_unit is Node3D:
+		feel_manager.trigger_unit_hit_flash(target_unit as Node3D)
+		if shielded:
+			feel_manager.spawn_explosion_burst(impact_pos, 0.9, Color(0.60, 0.86, 1.0), 0.16)
+		elif damage >= 200:
+			feel_manager.trigger_feedback("SMALL", impact_pos, camera_rig)
+	if shielded and health_bar_overlay != null:
+		health_bar_overlay.spawn_floating_text(impact_pos + Vector3(0.0, 0.75, 0.0), "🛡 %d" % damage, Color(0.65, 0.88, 1.0), false)
+	if typeof(target_unit) == TYPE_OBJECT and is_instance_valid(target_unit) and target_unit is EnemyUnitScript:
+		_alert_enemy_squad(target_unit as EnemyUnitScript)
+
 func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
 	if wall_destroyed:
 		_invalidate_ai_cache()
+		if feel_manager != null:
+			feel_manager.spawn_explosion_burst(hit_pos, 2.0, Color(1.0, 0.76, 0.25), 0.30)
+			feel_manager.trigger_feedback("MEDIUM", hit_pos, camera_rig)
+			feel_manager.play_sfx("breach", -5.0)
 	if health_bar_overlay == null:
 		return
 	if wall_destroyed:

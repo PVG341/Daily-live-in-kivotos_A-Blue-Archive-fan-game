@@ -18,6 +18,8 @@ extends Resource
 @export var pierce_walls: bool = false
 @export var penetration_power: int = 0
 @export var wall_damage: int = 0
+@export var caster_id: String = ""
+@export var caster_name: String = ""
 
 ## Returns true when desired_pos lies within [min_range, cast_range] on the XZ plane from origin_pos.
 func is_target_in_range(origin_pos: Vector3, desired_pos: Vector3) -> bool:
