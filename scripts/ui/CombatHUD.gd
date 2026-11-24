@@ -12,16 +12,48 @@ var striker_hp: Dictionary = {}
 var striker_orders: Dictionary = {}
 var selected_striker_ids: Array[String] = []
 var displayed_selection_summary: String = ""
+var displayed_sector_summary: String = ""
 var active_buff_ids: Array[String] = []
 var active_tool_id: String = "NONE"
 var _tool_buttons: Dictionary = {}
 
 func _ready() -> void:
 	_ensure_commander_toolbar()
+	_ensure_sector_progress_label()
 	update_cost(displayed_cost, displayed_max_cost)
 	update_wave(displayed_wave)
 	_refresh_buff_row()
 	set_active_commander_tool("NONE")
+
+func _ensure_sector_progress_label() -> void:
+	if find_child("SectorProgressLabel", true, false) != null:
+		return
+	var lbl := Label.new()
+	lbl.name = "SectorProgressLabel"
+	lbl.offset_left = 188.0
+	lbl.offset_top = 24.0
+	lbl.offset_right = 880.0
+	lbl.offset_bottom = 52.0
+	lbl.modulate = Color(0.55, 0.92, 1.0, 1.0)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.text = displayed_sector_summary
+	add_child(lbl)
+
+func update_sector_progress(active_index: int, layout: Array[Dictionary]) -> void:
+	_ensure_sector_progress_label()
+	var parts: Array[String] = []
+	for i in range(layout.size()):
+		var rtype: String = str(layout[i].get("room_type", "COMBAT"))
+		if i < active_index:
+			parts.append("✓ %s" % rtype)
+		elif i == active_index:
+			parts.append("▶ [%d/%d %s]" % [i + 1, layout.size(), rtype])
+		else:
+			parts.append("%s" % rtype)
+	displayed_sector_summary = "Chiến trường Seamless: " + " ➔ ".join(parts) if not parts.is_empty() else ""
+	var lbl := find_child("SectorProgressLabel", true, false) as Label
+	if lbl != null:
+		lbl.text = displayed_sector_summary
 
 func _ensure_commander_toolbar() -> void:
 	if find_child("CommanderToolBar", true, false) != null:
@@ -123,6 +155,10 @@ func clear_hud() -> void:
 	selected_striker_ids.clear()
 	active_buff_ids.clear()
 	displayed_selection_summary = ""
+	displayed_sector_summary = ""
+	var sector_lbl := find_child("SectorProgressLabel", true, false) as Label
+	if sector_lbl != null:
+		sector_lbl.text = ""
 	var sel_lbl := find_child("SelectedUnitsLabel", true, false) as Label
 	if sel_lbl != null:
 		sel_lbl.text = "Mặc định: Click/Kéo chọn lính [F1-F4/~] | [Z] Giao tranh [V] Phòng thủ [B] Freeshot [H] Giữ hỏa lực"
