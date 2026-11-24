@@ -23,6 +23,23 @@ var bounds_max: Vector2 = Vector2(65.0, 65.0)
 var _packed_cache: Dictionary = {}
 var _threaded_requested: Dictionary = {}
 
+func _process(_delta: float) -> void:
+	if _threaded_requested.is_empty():
+		return
+	var done_paths: Array[String] = []
+	for path_var: Variant in _threaded_requested.keys():
+		var path: String = str(path_var)
+		var status: ResourceLoader.ThreadLoadStatus = ResourceLoader.load_threaded_get_status(path)
+		if status == ResourceLoader.THREAD_LOAD_LOADED:
+			var threaded_res := ResourceLoader.load_threaded_get(path) as PackedScene
+			if threaded_res != null:
+				_packed_cache[path] = threaded_res
+			done_paths.append(path)
+		elif status == ResourceLoader.THREAD_LOAD_FAILED or status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			done_paths.append(path)
+	for p in done_paths:
+		_threaded_requested.erase(p)
+
 ## Queues background threaded loading for all unique sector scenes in layout and returns count of unique scenes.
 func preload_layout_chunks(layout: Array[Dictionary]) -> int:
 	var unique_paths: Dictionary = {}
@@ -165,10 +182,23 @@ func build_seamless_battlefield(room_container: Node3D, layout: Array[Dictionary
 		sector_node.register_wall_obstacle(gate)
 		sector_gates[i] = gate
 
+	update_sector_visibility(0)
+
 	bounds_min = Vector2(min_x - 24.0, min_z - 28.0)
 	bounds_max = Vector2(max_x + 24.0, max_z + 28.0)
 	battlefield_built.emit(active_sectors.size(), bounds_min, bounds_max)
 	return active_sectors
+
+## Shows only the active sector and immediate adjacent sectors/connectors to reduce GPU draw calls.
+func update_sector_visibility(active_index: int) -> void:
+	for i in range(active_sectors.size()):
+		var s = active_sectors[i]
+		if s != null and is_instance_valid(s) and s is Node3D:
+			(s as Node3D).visible = (absi(i - active_index) <= 1)
+	for i in range(sector_connectors.size()):
+		var conn: Node3D = sector_connectors[i]
+		if conn != null and is_instance_valid(conn):
+			conn.visible = (i >= active_index - 1 and i <= active_index + 1)
 
 func _create_sector_connector(
 	sector_idx: int,
@@ -317,26 +347,37 @@ func get_sector_index_at_position(world_pos: Vector3) -> int:
 ## Aggregates all unbroken and broken DestructibleWall3D obstacles (including locked SectorGates) across all sectors.
 func get_all_wall_obstacles() -> Array:
 	var all_walls: Array = []
+	var seen_ids: Dictionary = {}
 	for s in active_sectors:
 		if s != null and is_instance_valid(s) and s.has_method(&"get_wall_obstacles"):
 			for w in s.get_wall_obstacles():
-				if w != null and is_instance_valid(w) and not all_walls.has(w):
-					all_walls.append(w)
+				if w != null and is_instance_valid(w):
+					var wid: int = w.get_instance_id()
+					if not seen_ids.has(wid):
+						seen_ids[wid] = true
+						all_walls.append(w)
 	return all_walls
 
 ## Aggregates all CoverPoint3D nodes across all sectors and connecting thoroughfares.
 func get_all_cover_points() -> Array[CoverPoint3D]:
 	var all_covers: Array[CoverPoint3D] = []
+	var seen_ids: Dictionary = {}
 	for s in active_sectors:
 		if s != null and is_instance_valid(s) and s.has_method(&"get_cover_points"):
 			for cp in s.get_cover_points():
-				if cp != null and is_instance_valid(cp) and not all_covers.has(cp):
-					all_covers.append(cp)
+				if cp != null and is_instance_valid(cp):
+					var cid: int = cp.get_instance_id()
+					if not seen_ids.has(cid):
+						seen_ids[cid] = true
+						all_covers.append(cp)
 	for conn in sector_connectors:
 		if conn != null and is_instance_valid(conn):
 			for child in conn.get_children():
-				if child is CoverPoint3DScript and not all_covers.has(child):
-					all_covers.append(child as CoverPoint3DScript)
+				if child is CoverPoint3DScript:
+					var cid: int = child.get_instance_id()
+					if not seen_ids.has(cid):
+						seen_ids[cid] = true
+						all_covers.append(child as CoverPoint3DScript)
 	return all_covers
 
 ## Returns the full XZ camera bounds dictionary {"min": Vector2, "max": Vector2} for the stitched battlefield.
@@ -367,7 +408,11 @@ func clear_battlefield() -> void:
 
 func _exit_tree() -> void:
 	clear_battlefield()
+	_packed_cache.clear()
+	_threaded_requested.clear()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
 		clear_battlefield()
+		_packed_cache.clear()
+		_threaded_requested.clear()

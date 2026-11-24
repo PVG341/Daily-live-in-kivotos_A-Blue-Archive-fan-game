@@ -37,6 +37,7 @@ const STRIKER_ATTACK_COOLDOWN: float = 1.2
 const ENEMY_ATTACK_COOLDOWN: float = 1.6
 const DOUBLE_TAP_WINDOW_MS: int = 400
 const TACTICAL_MARCH_SPEED_MULT: float = 1.65
+const AI_EVAL_INTERVAL: float = 0.15
 
 var layout_generator: DungeonLayoutGeneratorScript
 var card_manager: RoguelikeCardManagerScript
@@ -93,6 +94,9 @@ var _boss_aoe_timer: float = 2.5
 var _event_check_timer: float = 0.0
 var _unit_cooldowns: Dictionary = {}
 var _unit_flank_memory: Dictionary = {}
+var _unit_ai_cache: Dictionary = {}
+var _unit_last_status_tag: Dictionary = {}
+var _unit_last_hp_state: Dictionary = {}
 var _is_dragging_box: bool = false
 var _drag_start_pos: Vector2 = Vector2.ZERO
 var _last_tool_hotkey: int = 0
@@ -137,6 +141,9 @@ func _exit_tree() -> void:
 	_clear_active_aoes()
 	_clear_active_zone_discs()
 	_unit_flank_memory.clear()
+	_unit_ai_cache.clear()
+	_unit_last_status_tag.clear()
+	_unit_last_hp_state.clear()
 	if selection_manager != null:
 		selection_manager.selected_units.clear()
 
@@ -260,6 +267,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func start_run(difficulty: int = 1) -> void:
 	run_finished = false
 	_unit_cooldowns.clear()
+	_unit_ai_cache.clear()
+	_unit_last_status_tag.clear()
+	_unit_last_hp_state.clear()
 	card_manager.clear_session_buffs()
 	if combat_hud != null:
 		combat_hud.clear_hud()
@@ -281,6 +291,9 @@ func start_run(difficulty: int = 1) -> void:
 ## Forces loading a specific room type (used by tests or debug tools).
 func load_single_room_for_test(room_type: String, difficulty: int = 1) -> void:
 	run_finished = false
+	_unit_ai_cache.clear()
+	_unit_last_status_tag.clear()
+	_unit_last_hp_state.clear()
 	var single_layout: Array[Dictionary] = [
 		{
 			"room_index": 0,
@@ -399,7 +412,11 @@ func spawn_boss_telegraphed_aoe(boss: BossUnitScript, target_pos: Vector3) -> Te
 	elif is_inside_tree():
 		add_child(aoe)
 	active_aoes.append(aoe)
+	_invalidate_ai_cache()
 	return aoe
+
+func _invalidate_ai_cache() -> void:
+	_unit_ai_cache.clear()
 
 ## Selects a rolled card during draft, applies its buff, and advances to the next room.
 func select_draft_card(card_index: int) -> bool:
@@ -638,6 +655,9 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	if commander_system != null:
 		commander_system.clear_directives()
 	_unit_flank_memory.clear()
+	_invalidate_ai_cache()
+	_unit_last_status_tag.clear()
+	_unit_last_hp_state.clear()
 	if health_bar_overlay != null:
 		health_bar_overlay.clear_all()
 
@@ -649,6 +669,7 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	var use_seamless: bool = seamless_mode and encounter_zone_manager != null and room_index >= 0 and room_index < encounter_zone_manager.active_sectors.size()
 	var room_inst: Node3D = null
 	if use_seamless:
+		encounter_zone_manager.update_sector_visibility(room_index)
 		room_inst = encounter_zone_manager.get_sector_node(room_index)
 		room_manager.current_room_node = null
 	else:
@@ -697,6 +718,9 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		proxy_factory.set_unit_selected(unit, false)
 		proxy_factory.update_unit_order_visual(unit, "")
 		proxy_factory.update_unit_hp_label(unit, unit.name, unit.current_hp, unit.max_hp, false)
+		var suid: int = unit.get_instance_id()
+		_unit_last_status_tag[suid] = ""
+		_unit_last_hp_state[suid] = Vector2i(unit.current_hp, unit.max_hp)
 		if combat_hud != null and unit.unit_data != null:
 			combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
 			combat_hud.update_striker_order(unit.unit_data.id, "")
@@ -825,6 +849,7 @@ func _complete_rest_sector_supply(room_index: int) -> void:
 	_open_card_draft()
 
 func _on_enemy_died(unit: CombatUnitScript) -> void:
+	_invalidate_ai_cache()
 	if unit != null and is_instance_valid(unit):
 		unit.visible = false
 		if commander_system != null and commander_system.priority_target == unit:
@@ -902,22 +927,58 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 		if not striker.check_emergency_override():
 			_execute_player_order(striker, delta, cd, eff_range)
 			if striker.is_holding_fire and striker.has_player_order:
-				proxy_factory.update_unit_order_visual(striker, "🚫 " + striker.current_order_type)
+				var hold_tag: String = "🚫 " + striker.current_order_type
+				if str(_unit_last_status_tag.get(uid, "")) != hold_tag:
+					_unit_last_status_tag[uid] = hold_tag
+					proxy_factory.update_unit_order_visual(striker, hold_tag)
+					if combat_hud != null and striker.unit_data != null:
+						combat_hud.update_striker_order(striker.unit_data.id, hold_tag)
 			_apply_unit_separation(striker, delta)
 			return
 
 	var decision: Dictionary
 	if utility_ai != null:
-		decision = utility_ai.evaluate_unit_utility(
-			striker,
-			allies,
-			enemies,
-			cover_points,
-			active_aoes,
-			commander_system,
-			current_room_info,
-			_get_student_bond_level(striker)
+		var cached_entry: Variant = _unit_ai_cache.get(uid, null)
+		var needs_eval: bool = (
+			not (cached_entry is Dictionary)
+			or not active_aoes.is_empty()
+			or delta >= AI_EVAL_INTERVAL
 		)
+		if not needs_eval:
+			var ce := cached_entry as Dictionary
+			var timer_left: float = float(ce.get("timer", 0.0)) - delta
+			ce["timer"] = timer_left
+			var cached_dec: Dictionary = ce.get("decision", {})
+			var cached_action: String = str(cached_dec.get("action", "IDLE"))
+			var cached_target: Variant = cached_dec.get("target", null)
+			var cached_cover: Variant = cached_dec.get("cover", null)
+			if timer_left <= 0.0 or cached_action == "EVADE_AOE" or (cached_action == "IDLE" and not enemies.is_empty()):
+				needs_eval = true
+			elif typeof(cached_target) == TYPE_OBJECT:
+				if not is_instance_valid(cached_target):
+					needs_eval = true
+				elif cached_target is CombatUnitScript and not (cached_target as CombatUnitScript).is_alive:
+					needs_eval = true
+			if not needs_eval and typeof(cached_cover) == TYPE_OBJECT and not is_instance_valid(cached_cover):
+				needs_eval = true
+			if not needs_eval:
+				decision = cached_dec
+		if needs_eval:
+			decision = utility_ai.evaluate_unit_utility(
+				striker,
+				allies,
+				enemies,
+				cover_points,
+				active_aoes,
+				commander_system,
+				current_room_info,
+				_get_student_bond_level(striker)
+			)
+			var slot_idx: int = maxi(0, squad_units.find(striker))
+			_unit_ai_cache[uid] = {
+				"decision": decision,
+				"timer": AI_EVAL_INTERVAL + float(slot_idx % 4) * 0.025,
+			}
 	else:
 		decision = dps_ai.evaluate_action(striker, allies, enemies, cover_points)
 
@@ -926,9 +987,11 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	var target_pos: Vector3 = decision.get("target_pos", striker.position)
 	var status_tag: String = str(decision.get("status_tag", ""))
 	if not status_tag.is_empty():
-		proxy_factory.update_unit_order_visual(striker, status_tag)
-		if combat_hud != null and striker.unit_data != null:
-			combat_hud.update_striker_order(striker.unit_data.id, status_tag)
+		if str(_unit_last_status_tag.get(uid, "")) != status_tag:
+			_unit_last_status_tag[uid] = status_tag
+			proxy_factory.update_unit_order_visual(striker, status_tag)
+			if combat_hud != null and striker.unit_data != null:
+				combat_hud.update_striker_order(striker.unit_data.id, status_tag)
 
 	match action:
 		"EVADE_AOE", "SURVIVAL_RETREAT", "ADVANCE_TO_ZONE", "HOLD_DEFENSE_ZONE":
@@ -1117,6 +1180,8 @@ func has_unit_los(attacker: CombatUnitScript, target: CombatUnitScript) -> bool:
 func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.36) -> Object:
 	if current_room_info == null or not is_instance_valid(current_room_info):
 		return null
+	if current_room_info.has_method(&"find_wall_blocking_point"):
+		return current_room_info.find_wall_blocking_point(world_pos, padding)
 	var walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
 	for wall in walls:
 		if wall != null and is_instance_valid(wall) and wall.intersects_point_xz(world_pos, padding):
@@ -1128,6 +1193,8 @@ func _find_movement_blocker_along_segment(from_pos: Vector3, to_pos: Vector3) ->
 		return null
 	var seg_a := Vector3(from_pos.x, from_pos.y + 0.5, from_pos.z)
 	var seg_b := Vector3(to_pos.x, to_pos.y + 0.5, to_pos.z)
+	if current_room_info.has_method(&"find_movement_blocker_along_segment"):
+		return current_room_info.find_movement_blocker_along_segment(seg_a, seg_b, 0.32)
 	var closest_wall: Object = null
 	var best_t: float = 2.0
 	var walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
@@ -1326,11 +1393,14 @@ func _get_terrain_mods(world_pos: Vector3) -> Dictionary:
 func _tick_active_aoes(delta: float) -> void:
 	var remaining: Array[TelegraphedAoEScript] = []
 	var living_strikers: Array = _get_living_strikers()
+	var any_detonated: bool = false
 	for aoe in active_aoes:
 		if aoe == null or not is_instance_valid(aoe):
+			any_detonated = true
 			continue
 		aoe.tick(delta, living_strikers)
 		if aoe.has_detonated:
+			any_detonated = true
 			if aoe.get_parent() != null:
 				aoe.get_parent().remove_child(aoe)
 			aoe.free()
@@ -1338,6 +1408,8 @@ func _tick_active_aoes(delta: float) -> void:
 			proxy_factory.update_aoe_progress(aoe, aoe.get_warning_progress())
 			remaining.append(aoe)
 	active_aoes = remaining
+	if any_detonated:
+		_invalidate_ai_cache()
 
 func _resolve_random_event(evt: Dictionary) -> void:
 	var etype: String = str(evt.get("type", ""))
@@ -1515,6 +1587,7 @@ func _handle_commander_right_click(screen_pos: Vector2, shift_held: bool = false
 				if u.has_player_order and u.current_order_type == "MOVE":
 					u.clear_player_order()
 			commander_system.set_target_for_units(e, sel_ids)
+			_invalidate_ai_cache()
 			_update_status_banner("Chỉ thị [%s]: Mục tiêu ưu tiên (%s)" % [scope, e.name])
 			return
 
@@ -1522,11 +1595,13 @@ func _handle_commander_right_click(screen_pos: Vector2, shift_held: bool = false
 	if shift_held:
 		var move_ids: Array[String] = sel_ids if not sel_ids.is_empty() else _get_living_striker_ids()
 		commander_system.clear_directives_for_units(move_ids)
+		_invalidate_ai_cache()
 		if selection_manager != null and not selection_manager.selected_units.is_empty():
 			selection_manager.issue_move_order(world_pt)
 		else:
 			for u in targets:
 				u.receive_move_order(world_pt)
+				_unit_last_status_tag[u.get_instance_id()] = "MOVE"
 				proxy_factory.update_unit_order_visual(u, "MOVE")
 				if combat_hud != null and u.unit_data != null:
 					combat_hud.update_striker_order(u.unit_data.id, "MOVE")
@@ -1539,6 +1614,7 @@ func _handle_commander_right_click(screen_pos: Vector2, shift_held: bool = false
 			u.clear_player_order()
 	var origin_centroid: Vector3 = _get_units_centroid(targets)
 	commander_system.set_advance_target_for_units(origin_centroid, world_pt, sel_ids)
+	_invalidate_ai_cache()
 	proxy_factory.update_order_beacon(order_beacon, world_pt, Color(1.0, 0.85, 0.22, 0.55), true)
 	_update_status_banner("Chỉ thị [%s]: Hướng tiến công (vừa đi vừa đánh)" % scope)
 
@@ -1565,6 +1641,7 @@ func _get_units_centroid(units_list: Array) -> Vector3:
 	return (sum / float(count)) if count > 0 else Vector3.ZERO
 
 func _on_striker_died(unit: CombatUnitScript) -> void:
+	_invalidate_ai_cache()
 	if unit == null or not is_instance_valid(unit):
 		return
 	if selection_manager != null:
@@ -1636,9 +1713,11 @@ func _toggle_hold_fire_for_selection() -> void:
 	for u in targets:
 		u.set_hold_fire(any_not_holding)
 		var tag: String = "🚫 GIỮ HỎA LỰC" if any_not_holding else ""
+		_unit_last_status_tag[u.get_instance_id()] = tag
 		proxy_factory.update_unit_order_visual(u, tag)
 		if combat_hud != null and u.unit_data != null:
 			combat_hud.update_striker_order(u.unit_data.id, tag)
+	_invalidate_ai_cache()
 	_update_status_banner("Giữ Hỏa Lực (%s): %s" % ["BẬT" if any_not_holding else "TẮT", ", ".join(_get_selected_student_ids()) if not _get_selected_student_ids().is_empty() else "TOÀN ĐỘI"])
 
 func _clear_directives_for_selection() -> void:
@@ -1654,9 +1733,11 @@ func _clear_directives_for_selection() -> void:
 				var cu := u as CombatUnitScript
 				cu.set_hold_fire(false)
 				cu.clear_player_order()
+				_unit_last_status_tag[cu.get_instance_id()] = ""
 				proxy_factory.update_unit_order_visual(cu, "")
 				if combat_hud != null and cu.unit_data != null:
 					combat_hud.update_striker_order(cu.unit_data.id, "")
+	_invalidate_ai_cache()
 	_update_status_banner("Đã hủy chỉ thị: %s" % ", ".join(sel_ids))
 
 func _clear_all_directives() -> void:
@@ -1666,9 +1747,11 @@ func _clear_all_directives() -> void:
 		if u != null and is_instance_valid(u):
 			u.set_hold_fire(false)
 			u.clear_player_order()
+			_unit_last_status_tag[u.get_instance_id()] = ""
 			proxy_factory.update_unit_order_visual(u, "")
 			if combat_hud != null and u.unit_data != null:
 				combat_hud.update_striker_order(u.unit_data.id, "")
+	_invalidate_ai_cache()
 	if order_beacon != null:
 		proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
 	_update_status_banner("Đã hủy toàn bộ chỉ thị (TOÀN ĐỘI)")
@@ -1707,6 +1790,7 @@ func _on_commander_tool_changed(new_tool: int, _tool_name: String) -> void:
 			combat_hud.set_active_commander_tool("NONE")
 
 func _on_commander_zones_updated(_zones: Array) -> void:
+	_invalidate_ai_cache()
 	_sync_tactical_zone_discs()
 
 func _clear_active_zone_discs() -> void:
@@ -1824,6 +1908,7 @@ func _on_order_issued(order_type: String, units: Array[Node3D]) -> void:
 			if order_type == "HOLD_FIRE":
 				cu.is_holding_fire = true
 				cu.has_player_order = false
+			_unit_last_status_tag[cu.get_instance_id()] = order_type
 			proxy_factory.update_unit_order_visual(cu, order_type)
 			if combat_hud != null and cu.unit_data != null:
 				combat_hud.update_striker_order(cu.unit_data.id, order_type)
@@ -1842,8 +1927,10 @@ func _on_order_issued(order_type: String, units: Array[Node3D]) -> void:
 	_update_tactical_2d_overlay()
 
 func _on_striker_order_completed(u: CombatUnitScript) -> void:
+	_invalidate_ai_cache()
 	if u != null and is_instance_valid(u):
 		var restored_tag: String = "🚫 GIỮ HỎA LỰC" if u.is_holding_fire else ""
+		_unit_last_status_tag[u.get_instance_id()] = restored_tag
 		proxy_factory.update_unit_order_visual(u, restored_tag)
 		if combat_hud != null and u.unit_data != null:
 			combat_hud.update_striker_order(u.unit_data.id, restored_tag)
@@ -1851,6 +1938,7 @@ func _on_striker_order_completed(u: CombatUnitScript) -> void:
 	_update_tactical_2d_overlay()
 
 func _on_directive_changed(summary_text: String) -> void:
+	_invalidate_ai_cache()
 	_sync_tactical_zone_discs()
 	if commander_system != null:
 		if not commander_system.has_advance_vector and order_beacon != null:
@@ -1861,6 +1949,7 @@ func _on_directive_changed(summary_text: String) -> void:
 	_update_tactical_2d_overlay()
 
 func _on_priority_target_changed(_target: Node3D) -> void:
+	_invalidate_ai_cache()
 	_refresh_target_reticles()
 	_update_tactical_2d_overlay()
 
@@ -2030,17 +2119,25 @@ func _refresh_all_unit_labels() -> void:
 	var cam_yaw: float = camera_rig.rotation.y if camera_rig != null else 0.0
 	for s in squad_units:
 		if s != null and is_instance_valid(s):
-			proxy_factory.update_unit_hp_label(s, s.name, s.current_hp, s.max_hp, false)
+			var uid: int = s.get_instance_id()
+			var hp_vec := Vector2i(s.current_hp, s.max_hp)
+			if _unit_last_hp_state.get(uid, Vector2i(-1, -1)) != hp_vec:
+				_unit_last_hp_state[uid] = hp_vec
+				proxy_factory.update_unit_hp_label(s, s.name, s.current_hp, s.max_hp, false)
+				if combat_hud != null and s.unit_data != null:
+					combat_hud.update_striker_hp(s.unit_data.id, s.current_hp, s.max_hp)
 			var bar3d := s.get_node_or_null("VisualRoot/HPBar3D") as Node3D
-			if bar3d != null:
+			if bar3d != null and not is_equal_approx(bar3d.rotation.y, cam_yaw):
 				bar3d.rotation.y = cam_yaw
-			if combat_hud != null and s.unit_data != null:
-				combat_hud.update_striker_hp(s.unit_data.id, s.current_hp, s.max_hp)
 	for e in enemy_units:
 		if e != null and is_instance_valid(e):
-			proxy_factory.update_unit_hp_label(e, "BOSS" if e is BossUnitScript else e.name, e.current_hp, e.max_hp, true)
+			var uid: int = e.get_instance_id()
+			var hp_vec := Vector2i(e.current_hp, e.max_hp)
+			if _unit_last_hp_state.get(uid, Vector2i(-1, -1)) != hp_vec:
+				_unit_last_hp_state[uid] = hp_vec
+				proxy_factory.update_unit_hp_label(e, "BOSS" if e is BossUnitScript else e.name, e.current_hp, e.max_hp, true)
 			var bar3d := e.get_node_or_null("VisualRoot/HPBar3D") as Node3D
-			if bar3d != null:
+			if bar3d != null and not is_equal_approx(bar3d.rotation.y, cam_yaw):
 				bar3d.rotation.y = cam_yaw
 
 func _bind_unit_hp_feedback(unit: CombatUnitScript) -> void:
@@ -2102,18 +2199,25 @@ func _recenter_camera_on_squad() -> void:
 func _clear_enemies() -> void:
 	for e in enemy_units:
 		if e != null and is_instance_valid(e):
+			var uid: int = e.get_instance_id()
+			_unit_last_hp_state.erase(uid)
+			_unit_last_status_tag.erase(uid)
+			_unit_cooldowns.erase(uid)
 			if e.get_parent() != null:
 				e.get_parent().remove_child(e)
 			e.free()
 	enemy_units.clear()
 
 func _clear_active_aoes() -> void:
+	var had_aoes: bool = not active_aoes.is_empty()
 	for aoe in active_aoes:
 		if aoe != null and is_instance_valid(aoe):
 			if aoe.get_parent() != null:
 				aoe.get_parent().remove_child(aoe)
 			aoe.free()
 	active_aoes.clear()
+	if had_aoes:
+		_invalidate_ai_cache()
 
 func _update_status_banner(text: String) -> void:
 	if status_banner != null:
@@ -2251,6 +2355,8 @@ func _disconnect_signals() -> void:
 			hub_btn.pressed.disconnect(_on_return_hub_pressed)
 
 func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
+	if wall_destroyed:
+		_invalidate_ai_cache()
 	if health_bar_overlay == null:
 		return
 	if wall_destroyed:

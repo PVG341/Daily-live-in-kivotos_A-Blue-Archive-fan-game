@@ -9,10 +9,25 @@ const DestructibleWall3DScript := preload("res://scripts/combat/DestructibleWall
 @export var arena_size: Vector2 = Vector2(64.0, 56.0)
 
 var sector_index: int = 0
-var linked_sectors: Array = []
+var linked_sectors: Array = []:
+	set(value):
+		linked_sectors = value
+		_all_walls_dirty = true
 var wall_obstacles: Array = []
 var _walls_initialized: bool = false
 var _gateways_opened: bool = false
+var _cached_terrain_zones: Array = []
+var _terrain_zones_cached: bool = false
+var _all_walls_cache: Array = []
+var _all_walls_dirty: bool = true
+
+func _exit_tree() -> void:
+	_cached_terrain_zones.clear()
+	_all_walls_cache.clear()
+	linked_sectors.clear()
+	wall_obstacles.clear()
+	_terrain_zones_cached = false
+	_all_walls_dirty = true
 
 func _node_world_pos(n: Node3D) -> Vector3:
 	if n == null:
@@ -71,14 +86,18 @@ func _collect_covers_recursive(node: Node, out: Array[CoverPoint3D]) -> void:
 	for child in node.get_children():
 		_collect_covers_recursive(child, out)
 
-## Recursively collects all TacticalTerrainZone nodes under TerrainFeatures (or self).
+## Recursively collects all TacticalTerrainZone nodes under TerrainFeatures (or self), cached after first scan.
 func get_terrain_zones() -> Array:
+	if _terrain_zones_cached:
+		return _cached_terrain_zones
 	var zones: Array = []
 	var root_search: Node = get_node_or_null("TerrainFeatures")
 	if root_search == null:
 		root_search = self
 	_collect_terrain_recursive(root_search, zones)
-	return zones
+	_cached_terrain_zones = zones
+	_terrain_zones_cached = true
+	return _cached_terrain_zones
 
 func _collect_terrain_recursive(node: Node, out: Array) -> void:
 	if is_instance_of(node, TacticalTerrainZoneScript):
@@ -94,22 +113,26 @@ func get_terrain_modifiers_at(world_pos: Vector3) -> Dictionary:
 	var dmg_taken_mult: float = 1.0
 	var elev_offset: float = 0.0
 
-	var all_zones: Array = get_terrain_zones()
-	for sector in linked_sectors:
-		if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"get_terrain_zones"):
-			for sz in sector.get_terrain_zones():
-				all_zones.append(sz)
-
-	for zone in all_zones:
-		if zone != null and is_instance_valid(zone) and zone.contains_point_xz(world_pos):
-			var mods: Dictionary = zone.get_terrain_modifiers()
-			active_type = str(mods.get("terrain_type", active_type))
-			speed_mult = minf(speed_mult, float(mods.get("speed_multiplier", 1.0)))
-			range_mult = maxf(range_mult, float(mods.get("range_bonus_multiplier", 1.0)))
-			dmg_taken_mult = minf(dmg_taken_mult, float(mods.get("damage_taken_multiplier", 1.0)))
-			var z_elev: float = float(mods.get("elevation_offset", 0.0))
-			if absf(z_elev) > absf(elev_offset):
-				elev_offset = z_elev
+	var sectors_to_check: Array = linked_sectors if not linked_sectors.is_empty() else [self]
+	for sector in sectors_to_check:
+		if sector == null or not is_instance_valid(sector) or not sector.has_method(&"get_terrain_zones"):
+			continue
+		if sectors_to_check.size() > 1 and sector is Node3D:
+			var s_node := sector as Node3D
+			var s_orig: Vector3 = _node_world_pos(s_node)
+			var s_size: Vector2 = sector.arena_size
+			if absf(world_pos.z - s_orig.z) > s_size.y * 0.5 + 3.0 or absf(world_pos.x - s_orig.x) > s_size.x * 0.5 + 3.0:
+				continue
+		for zone in sector.get_terrain_zones():
+			if zone != null and is_instance_valid(zone) and zone.contains_point_xz(world_pos):
+				var mods: Dictionary = zone.get_terrain_modifiers()
+				active_type = str(mods.get("terrain_type", active_type))
+				speed_mult = minf(speed_mult, float(mods.get("speed_multiplier", 1.0)))
+				range_mult = maxf(range_mult, float(mods.get("range_bonus_multiplier", 1.0)))
+				dmg_taken_mult = minf(dmg_taken_mult, float(mods.get("damage_taken_multiplier", 1.0)))
+				var z_elev: float = float(mods.get("elevation_offset", 0.0))
+				if absf(z_elev) > absf(elev_offset):
+					elev_offset = z_elev
 
 	return {
 		"terrain_type": active_type,
@@ -160,7 +183,9 @@ func _split_perimeter_wall(node_path: String, base_name: String, gate_width: flo
 ## Subdivides structural CSGBox3D walls/barricades/piers under TerrainFeatures and CoverPoints into modular DestructibleWall3D segments.
 func setup_destructible_walls() -> Array:
 	if _walls_initialized:
-		return _prune_wall_obstacles()
+		return wall_obstacles
+	# Cache terrain zones before populating TerrainFeatures with DestructibleWall3D segments.
+	get_terrain_zones()
 	_walls_initialized = true
 
 	var candidates: Array[CSGBox3D] = []
@@ -169,6 +194,7 @@ func setup_destructible_walls() -> Array:
 		if folder != null:
 			_collect_wall_boxes_recursive(folder, candidates)
 
+	var shared_mats: Dictionary = {}
 	for box in candidates:
 		if box == null or not is_instance_valid(box):
 			continue
@@ -189,6 +215,14 @@ func setup_destructible_walls() -> Array:
 		var mat_color := Color(0.68, 0.64, 0.58)
 		if box.material is StandardMaterial3D:
 			mat_color = (box.material as StandardMaterial3D).albedo_color
+		var mat_key: int = mat_color.to_rgba32()
+		var shared_mat: StandardMaterial3D
+		if shared_mats.has(mat_key):
+			shared_mat = shared_mats[mat_key] as StandardMaterial3D
+		else:
+			shared_mat = StandardMaterial3D.new()
+			shared_mat.albedo_color = mat_color
+			shared_mats[mat_key] = shared_mat
 
 		var box_size: Vector3 = box.size
 		var along_x: bool = box_size.x >= box_size.z
@@ -207,9 +241,10 @@ func setup_destructible_walls() -> Array:
 			var local_offset := Vector3(offset_scalar, 0.0, 0.0) if along_x else Vector3(0.0, 0.0, offset_scalar)
 			seg.transform = Transform3D(box.transform.basis, box.transform.origin + (box.transform.basis * local_offset))
 			parent_node.add_child(seg)
-			seg.setup_wall(seg_size, tier, seg_hp, mat_color, true)
+			seg.setup_wall(seg_size, tier, seg_hp, mat_color, true, shared_mat)
 			wall_obstacles.append(seg)
 
+	invalidate_wall_cache()
 	return _prune_wall_obstacles()
 
 func _collect_wall_boxes_recursive(node: Node, out: Array[CSGBox3D]) -> void:
@@ -230,38 +265,121 @@ func _prune_wall_obstacles() -> Array:
 	wall_obstacles = valid
 	return wall_obstacles
 
+## Marks the aggregated multi-sector wall cache as dirty.
+func invalidate_wall_cache() -> void:
+	_all_walls_dirty = true
+
 ## Returns all modular DestructibleWall3D obstacles in this room.
 func get_wall_obstacles() -> Array:
 	if not _walls_initialized:
 		return setup_destructible_walls()
-	return _prune_wall_obstacles()
+	return wall_obstacles
 
 ## Returns all DestructibleWall3D obstacles across this sector and any linked seamless battlefield sectors.
 func get_all_battlefield_walls() -> Array:
-	var all_walls: Array = get_wall_obstacles().duplicate()
+	if not _all_walls_dirty:
+		return _all_walls_cache
+	var rebuilt: Array = []
+	var seen: Dictionary = {}
+	for w in get_wall_obstacles():
+		if w != null and is_instance_valid(w):
+			var wid: int = w.get_instance_id()
+			if not seen.has(wid):
+				seen[wid] = true
+				rebuilt.append(w)
 	for sector in linked_sectors:
 		if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"get_wall_obstacles"):
 			for sw in sector.get_wall_obstacles():
-				if sw != null and is_instance_valid(sw) and not all_walls.has(sw):
-					all_walls.append(sw)
-	return all_walls
+				if sw != null and is_instance_valid(sw):
+					var swid: int = sw.get_instance_id()
+					if not seen.has(swid):
+						seen[swid] = true
+						rebuilt.append(sw)
+	_all_walls_cache = rebuilt
+	_all_walls_dirty = false
+	return _all_walls_cache
 
 ## Registers an extra DestructibleWall3D into wall_obstacles for LOS and projectile checks.
 func register_wall_obstacle(wall: Node3D) -> void:
 	if wall != null and is_instance_valid(wall) and not wall_obstacles.has(wall):
 		wall_obstacles.append(wall)
+		invalidate_wall_cache()
+		for sector in linked_sectors:
+			if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"invalidate_wall_cache"):
+				sector.invalidate_wall_cache()
 
-## Evaluates Line-of-Sight between from_pos and to_pos considering wall armor_tier vs penetration_power across all linked sectors.
+## Zero-copy Z-band filtered query returning the first wall blocking world_pos within padding.
+func find_wall_blocking_point(world_pos: Vector3, padding: float = 0.36) -> Object:
+	var sectors_to_check: Array = linked_sectors if not linked_sectors.is_empty() else [self]
+	var multi_sector: bool = sectors_to_check.size() > 1
+	for sector in sectors_to_check:
+		if sector == null or not is_instance_valid(sector) or not sector.has_method(&"get_wall_obstacles"):
+			continue
+		if multi_sector and sector is Node3D:
+			var s_orig: Vector3 = _node_world_pos(sector as Node3D)
+			var half_z: float = sector.arena_size.y * 0.5
+			if absf(world_pos.z - s_orig.z) > half_z + 4.0:
+				continue
+		for wall in sector.get_wall_obstacles():
+			if wall != null and is_instance_valid(wall) and wall.intersects_point_xz(world_pos, padding):
+				return wall
+	return null
+
+## Zero-copy Z-band filtered query returning the closest unbroken wall intersecting [from_pos, to_pos].
+func find_movement_blocker_along_segment(from_pos: Vector3, to_pos: Vector3, padding: float = 0.32) -> Object:
+	var seg_min_z: float = minf(from_pos.z, to_pos.z) - 4.0
+	var seg_max_z: float = maxf(from_pos.z, to_pos.z) + 4.0
+	var closest_wall: Object = null
+	var best_t: float = 2.0
+	var sectors_to_check: Array = linked_sectors if not linked_sectors.is_empty() else [self]
+	var multi_sector: bool = sectors_to_check.size() > 1
+	for sector in sectors_to_check:
+		if sector == null or not is_instance_valid(sector) or not sector.has_method(&"get_wall_obstacles"):
+			continue
+		if multi_sector and sector is Node3D:
+			var s_orig: Vector3 = _node_world_pos(sector as Node3D)
+			var half_z: float = sector.arena_size.y * 0.5
+			if s_orig.z + half_z < seg_min_z or s_orig.z - half_z > seg_max_z:
+				continue
+		for wall in sector.get_wall_obstacles():
+			if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
+				continue
+			var res: Dictionary = wall.intersects_segment(from_pos, to_pos, padding)
+			if bool(res.get("hit", false)):
+				var t_val: float = float(res.get("t", 1.0))
+				if t_val < best_t:
+					best_t = t_val
+					closest_wall = wall
+	return closest_wall
+
+## Evaluates Line-of-Sight between from_pos and to_pos considering wall armor_tier vs penetration_power across relevant sectors.
 func check_line_of_sight(from_pos: Vector3, to_pos: Vector3, penetration_power: int = 0) -> Dictionary:
 	var hits: Array[Dictionary] = []
-	for wall in get_all_battlefield_walls():
-		if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
+	var seg_min_z: float = minf(from_pos.z, to_pos.z) - 4.0
+	var seg_max_z: float = maxf(from_pos.z, to_pos.z) + 4.0
+	var sectors_to_check: Array = linked_sectors if not linked_sectors.is_empty() else [self]
+	var multi_sector: bool = sectors_to_check.size() > 1
+
+	for sector in sectors_to_check:
+		if sector == null or not is_instance_valid(sector) or not sector.has_method(&"get_wall_obstacles"):
 			continue
-		if wall.wall_size.y <= 1.05 and Vector2(from_pos.x, from_pos.z).distance_to(Vector2(wall.get_world_center().x, wall.get_world_center().z)) <= 3.2:
-			continue
-		var res: Dictionary = wall.intersects_segment(from_pos, to_pos)
-		if bool(res.get("hit", false)):
-			hits.append(res)
+		if multi_sector and sector is Node3D:
+			var s_orig: Vector3 = _node_world_pos(sector as Node3D)
+			var half_z: float = sector.arena_size.y * 0.5
+			if s_orig.z + half_z < seg_min_z or s_orig.z - half_z > seg_max_z:
+				continue
+		for wall in sector.get_wall_obstacles():
+			if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
+				continue
+			if wall.wall_size.y <= 1.05:
+				var wc: Vector3 = wall.get_world_center()
+				var dx: float = from_pos.x - wc.x
+				var dz: float = from_pos.z - wc.z
+				if dx * dx + dz * dz <= 10.24:
+					continue
+			var res: Dictionary = wall.intersects_segment(from_pos, to_pos)
+			if bool(res.get("hit", false)):
+				hits.append(res)
 
 	hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return float(a.get("t", 1.0)) < float(b.get("t", 1.0))

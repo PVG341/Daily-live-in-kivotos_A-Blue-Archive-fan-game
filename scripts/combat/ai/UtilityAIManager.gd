@@ -118,6 +118,7 @@ func evaluate_unit_utility(
 	for e in enemies:
 		if e != null and is_instance_valid(e) and _is_alive(e):
 			living_enemies.append(e)
+	var los_cache: Dictionary = {}
 
 	# 4. Per-unit Tactical Zone directives (ASSAULT, DEFENSE, FREESHOT) with entry hysteresis
 	var prio_target: Object = null
@@ -171,7 +172,7 @@ func evaluate_unit_utility(
 						"status_tag": "🛡️ VÀO VÙNG PHÒNG THỦ",
 					}
 			else:
-				var def_enemy: Object = valid_prio if valid_prio != null else _pick_best_enemy(unit, unit_pos, living_enemies, room_info) if not living_enemies.is_empty() else null
+				var def_enemy: Object = valid_prio if valid_prio != null else _pick_best_enemy(unit, unit_pos, living_enemies, room_info, los_cache) if not living_enemies.is_empty() else null
 				var def_score: float = 76.0 * compliance_mult
 				if def_enemy != null and def_score > float(best["score"]):
 					best = {
@@ -273,7 +274,7 @@ func evaluate_unit_utility(
 			if unit_role == StudentData.CombatRole.TANKER:
 				cover_score += 12.0
 			if cover_score > float(best["score"]):
-				var vis_enemy: Object = _pick_best_enemy(unit, unit_pos, living_enemies, room_info)
+				var vis_enemy: Object = _pick_best_enemy(unit, unit_pos, living_enemies, room_info, los_cache)
 				best = {
 					"action": "TAKE_COVER_AND_ENGAGE",
 					"target": vis_enemy,
@@ -291,7 +292,13 @@ func evaluate_unit_utility(
 			var e_pos: Vector3 = _get_pos(enemy)
 			var dist: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(e_pos.x, e_pos.z))
 			var e_hp: float = _get_hp_ratio(enemy)
-			var clear_los: bool = _check_los(unit_pos, e_pos, room_info, pen)
+			var eid: int = enemy.get_instance_id()
+			var clear_los: bool
+			if los_cache.has(eid):
+				clear_los = bool(los_cache[eid])
+			else:
+				clear_los = _check_los(unit_pos, e_pos, room_info, pen)
+				los_cache[eid] = clear_los
 			var candidate_score: float = 36.0 - dist * 0.5 + (1.0 - e_hp) * 14.0
 			if clear_los:
 				candidate_score += 12.0
@@ -317,14 +324,21 @@ func evaluate_unit_utility(
 
 	return best
 
-func _pick_best_enemy(unit: Object, unit_pos: Vector3, living_enemies: Array, room_info: Object) -> Object:
+func _pick_best_enemy(unit: Object, unit_pos: Vector3, living_enemies: Array, room_info: Object, los_cache: Dictionary = {}) -> Object:
 	var pen: int = int(unit.get(&"penetration_power")) if (&"penetration_power" in unit) else 0
 	var chosen: Object = living_enemies[0]
 	var chosen_score: float = -INF
 	for enemy in living_enemies:
 		var e_pos: Vector3 = _get_pos(enemy)
 		var dist: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(e_pos.x, e_pos.z))
-		var sc: float = -dist + (15.0 if _check_los(unit_pos, e_pos, room_info, pen) else 0.0)
+		var eid: int = enemy.get_instance_id()
+		var has_los: bool
+		if los_cache.has(eid):
+			has_los = bool(los_cache[eid])
+		else:
+			has_los = _check_los(unit_pos, e_pos, room_info, pen)
+			los_cache[eid] = has_los
+		var sc: float = -dist + (15.0 if has_los else 0.0)
 		if sc > chosen_score:
 			chosen_score = sc
 			chosen = enemy
@@ -388,6 +402,8 @@ func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, _directive
 		if bool(cp.get(&"is_occupied")) and occ != unit and occ != null and is_instance_valid(occ) and _is_alive(occ):
 			continue
 		var cp_pos: Vector3 = _get_pos(cp)
+		if absf(cp_pos.x - unit_pos.x) > 14.0 or absf(cp_pos.z - unit_pos.z) > 14.0:
+			continue
 		var d: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(cp_pos.x, cp_pos.z))
 		if d > 14.0:
 			continue

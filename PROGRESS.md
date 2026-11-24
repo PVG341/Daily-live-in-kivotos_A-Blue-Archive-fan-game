@@ -213,6 +213,14 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
   * Liên kết toàn bộ phân khu qua `linked_sectors` để kiểm tra tầm nhìn `check_line_of_sight()`, đạn xuyên tường `get_all_battlefield_walls()`, và hiệu ứng địa hình `get_terrain_modifiers_at()` xuyên suốt mọi phân khu và hành lang.
   * Tự động mở rộng giới hạn `RTSCamera3D` (`bounds_min` / `bounds_max`) bao trọn toàn bộ chiến trường seamless và bổ sung thanh tiến trình `SectorProgressLabel` trên `CombatHUD`.
 
+### 12b. Tối ưu Hiệu năng & Hotfix Phase D (QA Patch)
+* **Tăng tốc CPU & GPU từ 5–6 FPS lên 116–128 FPS (4.08 ms/tick @ 60Hz):**
+  * `DestructibleWall3D.gd`: Cache `global_transform`, `affine_inverse()`, tâm thế giới và nửa kích thước XZ AABB qua `set_notify_transform(true)`; fast XZ AABB reject trước OBB kèm hằng `_NO_HIT`; tạo `RubbleRoot` lazy khi `destroy_wall()`; chia sẻ `StandardMaterial3D` theo màu và chỉ `duplicate()` khi tường bắt đầu vỡ/nhận sát thương.
+  * `TacticalTerrainZone.gd` & `CombatRoomData.gd`: Cache `get_world_center()` qua `_center_dirty`, cache `get_terrain_zones()`, lọc nhanh theo biên XZ phân khu trong `get_terrain_modifiers_at()`, bỏ `_prune_wall_obstacles()` mỗi tick, cache `get_all_battlefield_walls()` O(W) kèm `invalidate_wall_cache()`, thêm truy vấn Z-band (`find_wall_blocking_point()`, `find_movement_blocker_along_segment()`) và áp dụng lọc Z-band vào `check_line_of_sight()`.
+  * `EncounterZoneManager.gd`: Poll `ResourceLoader.load_threaded_get_status()` trong `_process()` không chặn Main Thread, thêm `update_sector_visibility(active_index)` ẩn phân khu/hành lang cách $\ge 2$ bước, khử trùng O(N) bằng `Dictionary`.
+  * `UtilityAIManager.gd`, `CombatArenaController.gd`, `CombatHUD.gd`: Memoize `_check_los()` trong cùng lượt đánh giá, fast axis reject trong `_find_best_cover()`, giảm tần suất chạy AI xuống `AI_EVAL_INTERVAL = 0.15s` lệch pha giữa 4 Striker kèm `_invalidate_ai_cache()`, và dirty-check HP/trạng thái nhãn & chân dung HUD.
+* **Hotfix Boss AoE (`previously freed instance`):** Trong `_tick_striker()`, ép đánh giá lại khi `cached_action == "EVADE_AOE"` và kiểm tra `typeof(...) == TYPE_OBJECT and is_instance_valid(...)` trước toán tử `is`; gọi `_invalidate_ai_cache()` trong `_tick_active_aoes()` và `_clear_active_aoes()`. Đã thêm 2 tick hồi quy trong `tests/test_combat_arena_flow.gd`.
+
 
 
 

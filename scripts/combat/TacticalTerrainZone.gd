@@ -17,6 +17,17 @@ enum TerrainType {
 @export var damage_taken_multiplier: float = 1.0
 @export var elevation_offset: float = 0.0
 
+var _center_dirty: bool = true
+var _cached_center: Vector3 = Vector3.ZERO
+
+func _ready() -> void:
+	set_notify_transform(true)
+	_center_dirty = true
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSFORM_CHANGED or what == NOTIFICATION_ENTER_TREE:
+		_center_dirty = true
+
 func get_terrain_type_name() -> String:
 	match terrain_type:
 		TerrainType.WATER_TRENCH:
@@ -35,7 +46,10 @@ func get_terrain_type_name() -> String:
 ## Returns the world-space center of this terrain zone even when parented to an offset sector out-of-tree.
 func get_world_center() -> Vector3:
 	if is_inside_tree():
-		return global_position
+		if _center_dirty:
+			_cached_center = global_position
+			_center_dirty = false
+		return _cached_center
 	var xform: Transform3D = transform
 	var p: Node = get_parent()
 	while p != null:
