@@ -188,7 +188,7 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 
 ---
 
-## 11. Phase D — Công cụ Chỉ huy Đa Vùng, Lệnh Riêng Từng Nhân Vật, Vùng Freeshot & Giữ Hỏa Lực Không Chặn Di Chuyển
+## 11. Phase C+ (Bản nâng cấp Công cụ Chỉ huy Đa Vùng, Lệnh Riêng Từng Nhân Vật, Vùng Freeshot & Giữ Hỏa Lực Không Chặn Di Chuyển)
 
 * **Quy trình Công cụ Chỉ huy Chuẩn ("Chọn Nhân Vật -> Chọn Công Cụ -> Click Bản Đồ" & Ấn Đúp Tại Chỗ):** Bổ sung thanh `CommanderToolBar` trong `CombatHUD` (`focus_mode = FOCUS_NONE`) với các nút và phím tắt `[Z / ZZ]` **Vùng Giao Tranh (`ASSAULT`)**, `[V / VV]` **Vùng Phòng Thủ (`DEFENSE`)**, `[B / BB]` **Vùng Freeshot (`FREESHOT`)**, `[H]` **Giữ Hỏa Lực (`HOLD_FIRE`)**, `[G]` **Hủy Đang Chọn**, `[Shift+G]` **Hủy Toàn Bộ** (loại bỏ chế độ Vùng Cân Bằng và bỏ tư thế chung toàn đội khi mới chọn công cụ). Ấn 1 lần chỉ nạp công cụ, ấn đúp (`ZZ`/`VV`/`BB`) kích hoạt ngay vùng tại vị trí nhóm đang chọn.
 * **Quy Tắc "Lệnh Mới Nhất Thắng" & Đa Vùng Không Trùng Lặp (`CommanderDirectiveSystem` & `ChibiProxyFactory`):** Loại bỏ ký hiệu `"*"` gây trùng vùng giữa "4 thành viên" và "TOÀN ĐỘI"; chuẩn hóa danh sách `squad_unit_ids` để lệnh toàn đội ban ra sau xóa hẳn vùng cá nhân cũ, và lệnh cá nhân ban ra sau tách riêng người đó khỏi vùng toàn đội. Tự động thu hồi vùng khi nhân vật hy sinh (`_on_striker_died`).
@@ -196,6 +196,23 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
 * **Phá Kẹt Vòng Tròn & Chống Va Chạm Đồng Minh (`UtilityAIManager` & `CombatArenaController`):** Khắc phục lỗi đứng khựng ở rìa vòng tròn bằng cơ chế trễ trạng thái (`_in_zone_<id>`) kết hợp điểm neo 4 góc phần tư sâu bên trong vùng (`_get_zone_inner_anchor()`); khóa đơn vị `DEFENSE` giữ đội hình chiến đấu bên trong vùng và cho phép đơn vị `ASSAULT` tiến/rút tự do sau khi vào vùng. Nâng cấp tránh đồng minh trong `_navigate_unit_toward()` (`_is_step_blocked_by_peer()`) và tăng lực đẩy tách `_apply_unit_separation()` (`1.35m`).
 * **Vùng Freeshot (`FREESHOT_BOMBARD`) & Giữ Hỏa Lực Không Khóa Di Chuyển (`CombatUnit`):** Cho phép chỉ định vùng oanh tạc pháo kích liên tục (`_fire_freeshot_shell()` gây sát thương AoE trong bán kính vùng). Đặt `is_holding_fire` là cờ độc lập trong `CombatUnit` để khi bật `[H]`, nhân vật vẫn nhận lệnh di chuyển, né AoE và đổi vùng bình thường, chỉ chặn hoàn toàn hành động nổ súng.
 * **Kiểm thử Xác minh (`tests/test_combat_arena_flow.gd`):** Bổ sung `# 4e.` và `# 4f.` kiểm tra chọn công cụ `CommanderToolBar`, click chân dung HUD, 3 vùng đồng thời, quy tắc "lệnh mới nhất thắng" (`Cá nhân -> Toàn đội` và `Toàn đội -> Cá nhân`), không trùng vùng 4 thành viên vs toàn đội, `[G]` vs `[Shift+G]`, ấn đúp `[VV]` đặt vùng tại chỗ, `ADVANCE_ENGAGE` vừa đi vừa đánh, và `HOLD_FIRE` (25/25 suite pass, `0` orphan nodes).
+
+---
+
+## 12. Phase D — Chiến Trường Seamless Đa Phân Khu (`EncounterZoneManager`), Tải Chunk Bất Đồng Bộ & Hành Quân Không Dịch Chuyển
+
+* **Quản lý Vùng Giao Tranh & Tải Chunk Bất Đồng Bộ (`EncounterZoneManager.gd` & `DungeonLayoutGenerator.gd`):**
+  * Chuyển từ mô hình "phòng rời xóa/tạo lại tại `(0,0,0)`" sang **Chiến trường Seamless Đa Phân Khu** dài hơn `260m` dọc theo trục tiến quân `-Z`.
+  * Sử dụng `ResourceLoader.load_threaded_request` (`preload_layout_chunks()` / `get_chunk_scene()`) để nạp trước các chunk phân khu (`COMBAT`, `ELITE`, `REST`, `BOSS`) vào bộ đệm, loại bỏ khựng khung hình.
+  * Tự động mở cổng thông suốt `16m` (`open_sector_gateways()`) ở tường Bắc/Nam của các phân khu liền kề và dựng đại lộ nối tiếp **`SectorConnector`** kèm tường chắn bên và `CoverPoint3D`.
+* **Cổng Chắn Năng Lượng (`SectorGate`) & Hành Quân Liên Tục Không Teleport (`CombatArenaController.gd`):**
+  * Mỗi phân khu có cổng chắn năng lượng `SectorGate_<k>` (`armor_tier = 99`) khóa lối ra phía Bắc khi còn địch. Ngay khi tiêu diệt hết địch trong khu vực (`_on_wave_cleared`), cổng tự động hạ xuống (`unlock_sector_gate()`), đổi bảng hiệu sang màu xanh lục `"🔓 KHU VỰC ... — TIẾN QUÂN ➔"`.
+  * Khi người chơi chọn thẻ Roguelike (`select_draft_card`), các phân khu cũ và những bức tường đã bị bắn thủng **được giữ nguyên** trên bản đồ; **4 học viên Striker không bị dịch chuyển (teleport)** mà giữ nguyên vị trí thực tế, tự động nhận chỉ thị `ADVANCE_ENGAGE` kèm **tăng tốc hành quân chiến thuật `1.65x` (`TACTICAL_MARCH_SPEED_MULT`)** để băng qua đại lộ nối tiếp tiến vào khu vực giao tranh mới.
+  * Mở rộng `room_rest.tscn` lên `64×36` đồng bộ chiều rộng chiến trường; trong chế độ seamless, đội hình hành quân thực tế vào **Trạm Tiếp Tế (`REST`)** mới kích hoạt hồi máu `+35%` và mở thẻ bài.
+* **Truy vấn Tọa độ Thế giới Liên Phân Khu & Mở rộng Camera (`CombatRoomData.gd`, `TacticalTerrainZone.gd`, `CoverPoint3D.gd`, `CombatHUD.gd`):**
+  * Liên kết toàn bộ phân khu qua `linked_sectors` để kiểm tra tầm nhìn `check_line_of_sight()`, đạn xuyên tường `get_all_battlefield_walls()`, và hiệu ứng địa hình `get_terrain_modifiers_at()` xuyên suốt mọi phân khu và hành lang.
+  * Tự động mở rộng giới hạn `RTSCamera3D` (`bounds_min` / `bounds_max`) bao trọn toàn bộ chiến trường seamless và bổ sung thanh tiến trình `SectorProgressLabel` trên `CombatHUD`.
+
 
 
 

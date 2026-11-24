@@ -8,8 +8,24 @@ const DestructibleWall3DScript := preload("res://scripts/combat/DestructibleWall
 @export var room_type: String = "COMBAT"
 @export var arena_size: Vector2 = Vector2(64.0, 56.0)
 
+var sector_index: int = 0
+var linked_sectors: Array = []
 var wall_obstacles: Array = []
 var _walls_initialized: bool = false
+var _gateways_opened: bool = false
+
+func _node_world_pos(n: Node3D) -> Vector3:
+	if n == null:
+		return Vector3.ZERO
+	if n.is_inside_tree():
+		return n.global_position
+	var xform: Transform3D = n.transform
+	var p: Node = n.get_parent()
+	while p != null:
+		if p is Node3D:
+			xform = (p as Node3D).transform * xform
+		p = p.get_parent()
+	return xform.origin
 
 ## Returns spawn positions from all Marker3D children under PlayerSpawns.
 func get_player_spawn_positions() -> Array[Vector3]:
@@ -19,8 +35,7 @@ func get_player_spawn_positions() -> Array[Vector3]:
 		return result
 	for child in container.get_children():
 		if child is Marker3D:
-			var m := child as Marker3D
-			result.append(m.global_position if m.is_inside_tree() else m.position)
+			result.append(_node_world_pos(child as Marker3D))
 	return result
 
 ## Returns spawn positions from all Marker3D children under EnemySpawns.
@@ -31,16 +46,15 @@ func get_enemy_spawn_positions() -> Array[Vector3]:
 		return result
 	for child in container.get_children():
 		if child is Marker3D:
-			var m := child as Marker3D
-			result.append(m.global_position if m.is_inside_tree() else m.position)
+			result.append(_node_world_pos(child as Marker3D))
 	return result
 
-## Returns the BossSpawn Marker3D position, or default Vector3(0, 0, -18) if absent.
+## Returns the BossSpawn Marker3D position, or default Vector3(0, 0, -18) in world space if absent.
 func get_boss_spawn_position() -> Vector3:
 	var boss_spawn := get_node_or_null("BossSpawn") as Marker3D
 	if boss_spawn != null:
-		return boss_spawn.global_position if boss_spawn.is_inside_tree() else boss_spawn.position
-	return Vector3(0.0, 0.0, -18.0)
+		return _node_world_pos(boss_spawn)
+	return _node_world_pos(self) + Vector3(0.0, 0.0, -18.0)
 
 ## Recursively collects all CoverPoint3D nodes under CoverPoints (or self).
 func get_cover_points() -> Array[CoverPoint3D]:
@@ -72,7 +86,7 @@ func _collect_terrain_recursive(node: Node, out: Array) -> void:
 	for child in node.get_children():
 		_collect_terrain_recursive(child, out)
 
-## Evaluates combined terrain modifiers at world_pos across all overlapping TacticalTerrainZones.
+## Evaluates combined terrain modifiers at world_pos across all overlapping TacticalTerrainZones (including linked seamless sectors).
 func get_terrain_modifiers_at(world_pos: Vector3) -> Dictionary:
 	var active_type: String = "NORMAL"
 	var speed_mult: float = 1.0
@@ -80,7 +94,13 @@ func get_terrain_modifiers_at(world_pos: Vector3) -> Dictionary:
 	var dmg_taken_mult: float = 1.0
 	var elev_offset: float = 0.0
 
-	for zone in get_terrain_zones():
+	var all_zones: Array = get_terrain_zones()
+	for sector in linked_sectors:
+		if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"get_terrain_zones"):
+			for sz in sector.get_terrain_zones():
+				all_zones.append(sz)
+
+	for zone in all_zones:
 		if zone != null and is_instance_valid(zone) and zone.contains_point_xz(world_pos):
 			var mods: Dictionary = zone.get_terrain_modifiers()
 			active_type = str(mods.get("terrain_type", active_type))
@@ -98,6 +118,44 @@ func get_terrain_modifiers_at(world_pos: Vector3) -> Dictionary:
 		"damage_taken_multiplier": dmg_taken_mult,
 		"elevation_offset": elev_offset,
 	}
+
+## Splits WallNorth and/or WallSouth to open a central thoroughfare gateway of gate_width meters for seamless multi-sector stitching.
+func open_sector_gateways(open_north: bool, open_south: bool, gate_width: float = 16.0) -> void:
+	if _gateways_opened:
+		return
+	_gateways_opened = true
+	if open_north:
+		_split_perimeter_wall("NavigationRegion3D/WallNorth", "WallNorth", gate_width)
+	if open_south:
+		_split_perimeter_wall("NavigationRegion3D/WallSouth", "WallSouth", gate_width)
+
+func _split_perimeter_wall(node_path: String, base_name: String, gate_width: float) -> void:
+	var wall := get_node_or_null(node_path) as CSGBox3D
+	if wall == null or wall.size.x <= gate_width + 2.0:
+		return
+	var parent_node := wall.get_parent()
+	if parent_node == null:
+		return
+	var total_w: float = wall.size.x
+	var side_w: float = (total_w - gate_width) * 0.5
+	var offset_x: float = gate_width * 0.5 + side_w * 0.5
+	var orig_pos: Vector3 = wall.position
+	var orig_size: Vector3 = wall.size
+
+	wall.visible = false
+	wall.use_collision = false
+
+	for side_info: Dictionary in [
+		{"suffix": "West", "x": orig_pos.x - offset_x},
+		{"suffix": "East", "x": orig_pos.x + offset_x},
+	]:
+		var flank := CSGBox3D.new()
+		flank.name = "%s%s" % [base_name, str(side_info["suffix"])]
+		flank.size = Vector3(side_w, orig_size.y, orig_size.z)
+		flank.position = Vector3(float(side_info["x"]), orig_pos.y, orig_pos.z)
+		flank.use_collision = true
+		flank.material = wall.material
+		parent_node.add_child(flank)
 
 ## Subdivides structural CSGBox3D walls/barricades/piers under TerrainFeatures and CoverPoints into modular DestructibleWall3D segments.
 func setup_destructible_walls() -> Array:
@@ -178,15 +236,25 @@ func get_wall_obstacles() -> Array:
 		return setup_destructible_walls()
 	return _prune_wall_obstacles()
 
+## Returns all DestructibleWall3D obstacles across this sector and any linked seamless battlefield sectors.
+func get_all_battlefield_walls() -> Array:
+	var all_walls: Array = get_wall_obstacles().duplicate()
+	for sector in linked_sectors:
+		if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"get_wall_obstacles"):
+			for sw in sector.get_wall_obstacles():
+				if sw != null and is_instance_valid(sw) and not all_walls.has(sw):
+					all_walls.append(sw)
+	return all_walls
+
 ## Registers an extra DestructibleWall3D into wall_obstacles for LOS and projectile checks.
 func register_wall_obstacle(wall: Node3D) -> void:
 	if wall != null and is_instance_valid(wall) and not wall_obstacles.has(wall):
 		wall_obstacles.append(wall)
 
-## Evaluates Line-of-Sight between from_pos and to_pos considering wall armor_tier vs penetration_power.
+## Evaluates Line-of-Sight between from_pos and to_pos considering wall armor_tier vs penetration_power across all linked sectors.
 func check_line_of_sight(from_pos: Vector3, to_pos: Vector3, penetration_power: int = 0) -> Dictionary:
 	var hits: Array[Dictionary] = []
-	for wall in get_wall_obstacles():
+	for wall in get_all_battlefield_walls():
 		if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
 			continue
 		if wall.wall_size.y <= 1.05 and Vector2(from_pos.x, from_pos.z).distance_to(Vector2(wall.get_world_center().x, wall.get_world_center().z)) <= 3.2:

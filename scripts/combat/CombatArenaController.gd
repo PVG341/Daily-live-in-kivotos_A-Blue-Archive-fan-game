@@ -29,18 +29,21 @@ const CombatRoomDataScript := preload("res://scripts/combat/CombatRoomData.gd")
 const CombatHealthBarOverlayScript := preload("res://scripts/combat/CombatHealthBarOverlay.gd")
 const CommanderDirectiveSystemScript := preload("res://scripts/combat/CommanderDirectiveSystem.gd")
 const UtilityAIManagerScript := preload("res://scripts/combat/ai/UtilityAIManager.gd")
+const EncounterZoneManagerScript := preload("res://scripts/combat/EncounterZoneManager.gd")
 
 const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
 const STRIKER_ATTACK_COOLDOWN: float = 1.2
 const ENEMY_ATTACK_COOLDOWN: float = 1.6
 const DOUBLE_TAP_WINDOW_MS: int = 400
+const TACTICAL_MARCH_SPEED_MULT: float = 1.65
 
 var layout_generator: DungeonLayoutGeneratorScript
 var card_manager: RoguelikeCardManagerScript
 var proxy_factory: ChibiProxyFactoryScript
 
 var room_manager: DungeonRoomManagerScript
+var encounter_zone_manager: EncounterZoneManagerScript
 var selection_manager: UnitSelectionManagerScript
 var projectile_manager: ProjectileManagerScript
 var wave_spawner: WaveSpawnerScript
@@ -48,6 +51,7 @@ var event_manager: CombatEventManagerScript
 var ex_skill_system: EXSkillSystemScript
 var commander_system: CommanderDirectiveSystemScript
 var utility_ai: UtilityAIManagerScript
+var seamless_mode: bool = true
 
 var tanker_ai: TankerAIScript
 var dps_ai: DamageDealerAIScript
@@ -93,6 +97,7 @@ var _is_dragging_box: bool = false
 var _drag_start_pos: Vector2 = Vector2.ZERO
 var _last_tool_hotkey: int = 0
 var _last_tool_hotkey_ms: int = -1000
+var _rest_supply_pending: bool = false
 var _initialized: bool = false
 
 func _init() -> void:
@@ -127,6 +132,8 @@ func _exit_tree() -> void:
 	_disconnect_signals()
 	if projectile_manager != null:
 		projectile_manager.clear_projectiles()
+	if encounter_zone_manager != null:
+		encounter_zone_manager.clear_battlefield()
 	_clear_active_aoes()
 	_clear_active_zone_discs()
 	_unit_flank_memory.clear()
@@ -249,7 +256,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if armed_tool == CommanderDirectiveSystemScript.ToolMode.NONE and selection_box_overlay != null:
 				selection_box_overlay.set_drag_rect(true, Rect2(_drag_start_pos, mm.position - _drag_start_pos).abs())
 
-## Starts or restarts a 4-room Roguelike dungeon run.
+## Starts or restarts a 4-room Roguelike dungeon run on the seamless multi-sector battlefield.
 func start_run(difficulty: int = 1) -> void:
 	run_finished = false
 	_unit_cooldowns.clear()
@@ -266,6 +273,9 @@ func start_run(difficulty: int = 1) -> void:
 
 	_spawn_persistent_strikers()
 	var layout: Array[Dictionary] = layout_generator.generate_layout(4, difficulty)
+	if seamless_mode and encounter_zone_manager != null:
+		encounter_zone_manager.build_seamless_battlefield(room_container, layout)
+		_apply_battlefield_camera_bounds()
 	room_manager.start_dungeon(layout)
 
 ## Forces loading a specific room type (used by tests or debug tools).
@@ -283,9 +293,21 @@ func load_single_room_for_test(room_type: String, difficulty: int = 1) -> void:
 				"wave_count": 1,
 			},
 			"door_positions": [],
+			"sector_origin": Vector3.ZERO,
+			"sector_dimensions": layout_generator._get_sector_dimensions(room_type),
 		}
 	]
+	if seamless_mode and encounter_zone_manager != null:
+		encounter_zone_manager.build_seamless_battlefield(room_container, single_layout)
+		_apply_battlefield_camera_bounds()
 	room_manager.start_dungeon(single_layout)
+
+func _apply_battlefield_camera_bounds() -> void:
+	if camera_rig == null or encounter_zone_manager == null:
+		return
+	var bf_bounds: Dictionary = encounter_zone_manager.get_battlefield_bounds()
+	camera_rig.bounds_min = bf_bounds.get("min", Vector2(-65.0, -65.0))
+	camera_rig.bounds_max = bf_bounds.get("max", Vector2(65.0, 65.0))
 
 ## Deterministic combat step callable from _physics_process or headless tests.
 func step_combat(delta: float) -> void:
@@ -349,7 +371,9 @@ func step_combat(delta: float) -> void:
 				event_manager.trigger_event(evt)
 				_resolve_random_event(evt)
 
-	# 7. Sync HUD, tactical 2D overlay & check defeat
+	# 7. Sync HUD, tactical 2D overlay & check defeat / seamless REST outpost arrival
+	if _rest_supply_pending:
+		_check_seamless_rest_outpost_arrival()
 	if health_bar_overlay != null:
 		health_bar_overlay.tick_floating_numbers(delta, _get_isometric_camera())
 	_refresh_all_unit_labels()
@@ -406,6 +430,7 @@ func _setup_child_managers() -> void:
 	_initialized = true
 
 	room_manager = _ensure_child(DungeonRoomManagerScript, "DungeonRoomManager") as DungeonRoomManagerScript
+	encounter_zone_manager = _ensure_child(EncounterZoneManagerScript, "EncounterZoneManager") as EncounterZoneManagerScript
 	selection_manager = _ensure_child(UnitSelectionManagerScript, "UnitSelectionManager") as UnitSelectionManagerScript
 	projectile_manager = _ensure_child(ProjectileManagerScript, "ProjectileManager") as ProjectileManagerScript
 	wave_spawner = _ensure_child(WaveSpawnerScript, "WaveSpawner") as WaveSpawnerScript
@@ -619,25 +644,37 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	room_elapsed_time = 0.0
 	_boss_aoe_timer = 2.5
 	_event_check_timer = 0.0
+	_rest_supply_pending = false
 
-	var scene_path: String = str(room_data.get("room_scene_path", "res://scenes/combat/rooms/room_combat.tscn"))
-	var room_packed := load(scene_path) as PackedScene
-	if room_packed == null:
-		return
-	var room_inst := room_packed.instantiate()
-	room_container.add_child(room_inst)
-	room_manager.current_room_node = room_inst
+	var use_seamless: bool = seamless_mode and encounter_zone_manager != null and room_index >= 0 and room_index < encounter_zone_manager.active_sectors.size()
+	var room_inst: Node3D = null
+	if use_seamless:
+		room_inst = encounter_zone_manager.get_sector_node(room_index)
+		room_manager.current_room_node = null
+	else:
+		var scene_path: String = str(room_data.get("room_scene_path", "res://scenes/combat/rooms/room_combat.tscn"))
+		var room_packed := load(scene_path) as PackedScene
+		if room_packed == null:
+			return
+		room_inst = room_packed.instantiate()
+		room_container.add_child(room_inst)
+		room_manager.current_room_node = room_inst
 
 	var room_info := room_inst as CombatRoomDataScript
 	current_room_info = room_info
-	if room_info != null:
+	if use_seamless:
+		if projectile_manager != null:
+			projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
+	elif room_info != null:
 		var walls: Array = room_info.setup_destructible_walls()
 		if projectile_manager != null:
 			projectile_manager.set_wall_obstacles(walls)
 	elif projectile_manager != null:
 		projectile_manager.set_wall_obstacles([])
+
 	var player_spawns: Array[Vector3] = room_info.get_player_spawn_positions() if room_info != null else []
 	var persisted_hp: Dictionary = room_manager.get_squad_persistent_state()
+	var preserve_unit_positions: bool = use_seamless and room_index > 0
 
 	for i in range(squad_units.size()):
 		var unit: CombatUnitScript = squad_units[i]
@@ -652,10 +689,11 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		unit.has_player_order = false
 		unit.current_order_type = ""
 		unit.order_target_node = null
-		if i < player_spawns.size():
-			unit.position = player_spawns[i]
-		else:
-			unit.position = Vector3(-4.5 + float(i) * 3.0, 0.0, 20.0)
+		if not preserve_unit_positions:
+			if i < player_spawns.size():
+				unit.position = player_spawns[i]
+			else:
+				unit.position = Vector3(-4.5 + float(i) * 3.0, 0.0, 20.0)
 		proxy_factory.set_unit_selected(unit, false)
 		proxy_factory.update_unit_order_visual(unit, "")
 		proxy_factory.update_unit_hp_label(unit, unit.name, unit.current_hp, unit.max_hp, false)
@@ -672,25 +710,36 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	if selection_box_overlay != null:
 		selection_box_overlay.update_tactical_markers([], [])
 		selection_box_overlay.update_commander_markers(Vector2.ZERO, 0.0, {})
-	if combat_hud != null and commander_system != null:
-		combat_hud.update_commander_status(commander_system.get_directive_summary())
 
-	if room_info != null:
+	if preserve_unit_positions and commander_system != null and encounter_zone_manager != null:
+		var next_rally: Vector3 = encounter_zone_manager.get_sector_rally_point(room_index)
+		var squad_center: Vector3 = _get_squad_centroid()
+		commander_system.set_advance_target_for_units(squad_center, next_rally, [])
+		proxy_factory.update_order_beacon(order_beacon, next_rally, Color(1.0, 0.85, 0.22, 0.55), true)
+		if camera_rig != null:
+			camera_rig.center_on_position(squad_center.lerp(next_rally, 0.45))
+
+	if combat_hud != null:
+		if commander_system != null:
+			combat_hud.update_commander_status(commander_system.get_directive_summary())
+		combat_hud.update_sector_progress(room_index, room_manager.layout)
+
+	if use_seamless and encounter_zone_manager != null:
+		cover_points = encounter_zone_manager.get_all_cover_points()
+	elif room_info != null:
 		cover_points = room_info.get_cover_points()
 
 	var room_type: String = str(room_data.get("room_type", "COMBAT"))
-	_update_status_banner("Room %d / %d - %s" % [room_index + 1, room_manager.layout.size(), room_type])
+	_update_status_banner("Sector %d / %d - %s (Seamless Battlefield)" % [room_index + 1, room_manager.layout.size(), room_type])
 
 	if room_type == "REST":
-		for unit in squad_units:
-			if unit != null and unit.is_alive:
-				unit.heal(int(round(float(unit.max_hp) * 0.35)))
-				if combat_hud != null and unit.unit_data != null:
-					combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
 		if combat_hud != null:
 			combat_hud.update_wave(room_index + 1)
-		room_manager.mark_current_room_cleared()
-		_open_card_draft()
+		if preserve_unit_positions:
+			_rest_supply_pending = true
+			_update_status_banner("Sector %d / %d - TRẠM TIẾP TẾ: Tiến quân vào khu vực để hồi phục & nhận thẻ!" % [room_index + 1, room_manager.layout.size()])
+		else:
+			_complete_rest_sector_supply(room_index)
 		return
 
 	var wave_def: Dictionary = room_data.get("enemy_wave_def", {})
@@ -748,6 +797,33 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 		combat_hud.update_wave(room_index + 1)
 	_update_tactical_2d_overlay()
 
+func _check_seamless_rest_outpost_arrival() -> void:
+	if not _rest_supply_pending or room_manager == null or encounter_zone_manager == null:
+		return
+	var cur_idx: int = room_manager.get_current_room_index()
+	if cur_idx < 0 or cur_idx >= encounter_zone_manager.sector_metadata.size():
+		_complete_rest_sector_supply(cur_idx)
+		return
+	var south_edge_z: float = float(encounter_zone_manager.sector_metadata[cur_idx].get("south_edge_z", 0.0))
+	for s in _get_living_strikers():
+		var su := s as CombatUnitScript
+		if su != null and (su.position.z <= south_edge_z - 1.5 or encounter_zone_manager.get_sector_index_at_position(su.position) == cur_idx):
+			_complete_rest_sector_supply(cur_idx)
+			return
+
+func _complete_rest_sector_supply(room_index: int) -> void:
+	_rest_supply_pending = false
+	for unit in squad_units:
+		if unit != null and unit.is_alive:
+			unit.heal(int(round(float(unit.max_hp) * 0.35)))
+			if combat_hud != null and unit.unit_data != null:
+				combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
+	if seamless_mode and encounter_zone_manager != null:
+		if encounter_zone_manager.unlock_sector_gate(room_index) and projectile_manager != null:
+			projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
+	room_manager.mark_current_room_cleared()
+	_open_card_draft()
+
 func _on_enemy_died(unit: CombatUnitScript) -> void:
 	if unit != null and is_instance_valid(unit):
 		unit.visible = false
@@ -765,6 +841,14 @@ func _on_enemy_died(unit: CombatUnitScript) -> void:
 func _on_wave_cleared(_wave_index: int) -> void:
 	if run_finished or room_manager == null or room_manager.is_draft_open:
 		return
+	var cur_idx: int = room_manager.get_current_room_index()
+	if seamless_mode and encounter_zone_manager != null:
+		if encounter_zone_manager.unlock_sector_gate(cur_idx):
+			if projectile_manager != null:
+				projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
+			if health_bar_overlay != null:
+				var gate_orig: Vector3 = encounter_zone_manager.get_sector_origin(cur_idx) + Vector3(0.0, 2.2, -26.0)
+				health_bar_overlay.spawn_floating_text(gate_orig, "🔓 CỔNG KHU VỰC ĐÃ MỞ!", Color(0.28, 1.0, 0.58), true)
 	room_manager.mark_current_room_cleared()
 	_open_card_draft()
 
@@ -1033,7 +1117,8 @@ func has_unit_los(attacker: CombatUnitScript, target: CombatUnitScript) -> bool:
 func _find_wall_blocking_point(world_pos: Vector3, padding: float = 0.36) -> Object:
 	if current_room_info == null or not is_instance_valid(current_room_info):
 		return null
-	for wall in current_room_info.get_wall_obstacles():
+	var walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
+	for wall in walls:
 		if wall != null and is_instance_valid(wall) and wall.intersects_point_xz(world_pos, padding):
 			return wall
 	return null
@@ -1045,7 +1130,8 @@ func _find_movement_blocker_along_segment(from_pos: Vector3, to_pos: Vector3) ->
 	var seg_b := Vector3(to_pos.x, to_pos.y + 0.5, to_pos.z)
 	var closest_wall: Object = null
 	var best_t: float = 2.0
-	for wall in current_room_info.get_wall_obstacles():
+	var walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
+	for wall in walls:
 		if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
 			continue
 		var res: Dictionary = wall.intersects_segment(seg_a, seg_b, 0.32)
@@ -1132,6 +1218,12 @@ func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: f
 		return
 	var mods: Dictionary = _get_terrain_mods(unit.position)
 	var speed_mult: float = float(mods.get("speed_multiplier", 1.0))
+	if not (unit is EnemyUnitScript) and seamless_mode and encounter_zone_manager != null and room_manager != null:
+		var cur_sec_idx: int = room_manager.get_current_room_index()
+		if cur_sec_idx > 0 and cur_sec_idx < encounter_zone_manager.sector_metadata.size():
+			var cur_south_z: float = float(encounter_zone_manager.sector_metadata[cur_sec_idx].get("south_edge_z", 0.0))
+			if unit.position.z > cur_south_z + 1.0 and flat_target.z < unit.position.z - 0.5:
+				speed_mult *= TACTICAL_MARCH_SPEED_MULT
 	var step: float = minf(dist, unit.speed * speed_mult * delta)
 	var dir: Vector3 = to_steer / dist
 	var mem: Variant = _unit_flank_memory.get(uid, null)
@@ -1302,7 +1394,8 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 	var breached_count: int = 0
 	if current_room_info != null and skill.wall_damage > 0:
 		var shape: String = skill.aoe_shape.to_upper()
-		for wall in current_room_info.get_wall_obstacles():
+		var all_walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
+		for wall in all_walls:
 			if wall == null or not is_instance_valid(wall) or wall.is_destroyed:
 				continue
 			var w_center: Vector3 = wall.get_world_center()

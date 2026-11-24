@@ -32,9 +32,21 @@ func get_terrain_type_name() -> String:
 		_:
 			return "NORMAL"
 
+## Returns the world-space center of this terrain zone even when parented to an offset sector out-of-tree.
+func get_world_center() -> Vector3:
+	if is_inside_tree():
+		return global_position
+	var xform: Transform3D = transform
+	var p: Node = get_parent()
+	while p != null:
+		if p is Node3D:
+			xform = (p as Node3D).transform * xform
+		p = p.get_parent()
+	return xform.origin
+
 ## Checks whether world_pos falls inside this terrain zone's XZ bounding box.
 func contains_point_xz(world_pos: Vector3) -> bool:
-	var center: Vector3 = global_position if is_inside_tree() else position
+	var center: Vector3 = get_world_center()
 	var half_x: float = maxf(0.1, absf(zone_extents.x))
 	var half_z: float = maxf(0.1, absf(zone_extents.y))
 	return absf(world_pos.x - center.x) <= half_x and absf(world_pos.z - center.z) <= half_z

@@ -395,17 +395,36 @@ func _run_tests() -> void:
 	check(striker0.position.distance_to(s0_before_adv) > 1.0, "Unit under ADVANCE_ENGAGE must actively advance along vector")
 	arena._clear_all_directives()
 
-	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
+	# 5. Phase D & Progression — Defeating all enemies unlocks SectorGate_0 -> opens RoguelikeCardDraft -> select_draft_card advances seamlessly without teleporting squad
+	check(arena.encounter_zone_manager != null and arena.encounter_zone_manager.active_sectors.size() == 4, "Seamless battlefield must stitch all 4 encounter zone sectors simultaneously")
+	check(arena.encounter_zone_manager.sector_connectors.size() == 3, "Seamless battlefield must build 3 connecting thoroughfares between the 4 sectors")
+	check(arena.encounter_zone_manager.is_sector_gate_unlocked(0) == false, "SectorGate_0 exiting Sector 0 must start locked while enemies are alive")
+	check(arena.camera_rig.bounds_min.y < -150.0, "Camera bounds must expand along -Z to cover the entire multi-sector battlefield")
+
+	var custom_s0_pos := Vector3(-3.0, 0.0, -18.0)
+	striker0.position = custom_s0_pos
+
 	for enemy in arena.enemy_units:
 		if enemy.is_alive:
 			enemy.take_damage(99999)
 
+	check(arena.encounter_zone_manager.is_sector_gate_unlocked(0) == true, "Clearing Sector 0 wave must automatically unlock and open SectorGate_0")
 	check(arena.room_manager.is_draft_open == true, "Defeating all enemies in room 0 must open draft")
 	check(arena.card_draft_panel.visible == true, "RoguelikeCardDraft panel must be visible when draft opens")
 	check(arena.current_draft_cards.size() == 3, "Draft must roll 3 cards")
 	check(arena.select_draft_card(0) == true, "select_draft_card(0) must apply card and advance")
 	check(arena.card_manager.get_active_buffs().size() == 1, "Selected card must be recorded in card_manager active buffs")
 	check(arena.room_manager.get_current_room_index() == 1, "Room manager must advance to room 1 after card draft")
+
+	var sec0_node = arena.encounter_zone_manager.get_sector_node(0)
+	var sec1_node = arena.encounter_zone_manager.get_sector_node(1)
+	check(sec0_node != null and is_instance_valid(sec0_node) and sec0_node.is_inside_tree(), "Sector 0 must remain alive in the 3D world after advancing to Sector 1")
+	check(arena.current_room_info == sec1_node, "current_room_info must point to Sector 1 after advancing")
+	check(striker0.position.distance_to(custom_s0_pos) <= 0.05, "Strikers must NOT be teleported when advancing to Sector 1 in seamless mode")
+	check(arena.commander_system.has_advance_vector == true, "Advancing to Sector 1 must automatically issue a forward ADVANCE_ENGAGE directive toward Sector 1")
+	check(arena.combat_hud.displayed_sector_summary.contains("2/4"), "CombatHUD SectorProgressLabel must highlight active sector 2/4")
+	arena.step_combat(0.5)
+	check(striker0.position.z < custom_s0_pos.z - 1.0, "Striker must march north through the unlocked SectorGate toward Sector 1")
 
 	# 6. Force-load BOSS room -> BossUnit + TelegraphedAoE detonation & cleanup
 	arena.load_single_room_for_test("BOSS", 1)

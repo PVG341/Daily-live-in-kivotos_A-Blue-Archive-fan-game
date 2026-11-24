@@ -19,6 +19,18 @@ func get_cover_direction() -> Vector3:
 		return Vector3.FORWARD
 	return cover_direction.normalized()
 
+## Returns the world-space position of this cover point even when parented to an offset sector out-of-tree.
+func get_world_position() -> Vector3:
+	if is_inside_tree():
+		return global_position
+	var xform: Transform3D = transform
+	var p: Node = get_parent()
+	while p != null:
+		if p is Node3D:
+			xform = (p as Node3D).transform * xform
+		p = p.get_parent()
+	return xform.origin
+
 func _sanitize_occupant() -> void:
 	if occupant == null:
 		is_occupied = false

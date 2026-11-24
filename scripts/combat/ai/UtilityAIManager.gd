@@ -463,5 +463,13 @@ func _get_hp_ratio(obj: Object) -> float:
 func _get_pos(obj: Object) -> Vector3:
 	if obj is Node3D:
 		var n := obj as Node3D
-		return n.global_position if n.is_inside_tree() else n.position
+		if n.is_inside_tree():
+			return n.global_position
+		var xform: Transform3D = n.transform
+		var p: Node = n.get_parent()
+		while p != null:
+			if p is Node3D:
+				xform = (p as Node3D).transform * xform
+			p = p.get_parent()
+		return xform.origin
 	return Vector3.ZERO
