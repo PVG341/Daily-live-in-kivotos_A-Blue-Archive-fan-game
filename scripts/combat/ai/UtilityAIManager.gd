@@ -22,7 +22,6 @@ func evaluate_unit_utility(
 
 	var unit_pos: Vector3 = _get_pos(unit)
 	var hp_ratio: float = _get_hp_ratio(unit)
-	var stance: int = int(directives.get("current_stance")) if (directives != null and &"current_stance" in directives) else STANCE_BALANCED
 	var compliance_mult: float = 1.0 + clampf(float(maxi(1, bond_level)) * 0.005, 0.0, 0.5)
 	var unit_role: int = StudentData.CombatRole.DAMAGE_DEALER
 	var udata: Variant = unit.get(&"unit_data")
@@ -33,18 +32,20 @@ func evaluate_unit_utility(
 			student_id = (udata as StudentData).id
 	var holding_fire: bool = bool(unit.get(&"is_holding_fire")) if (&"is_holding_fire" in unit) else false
 
-	# Resolve per-unit zone & target assignments (fallback cleanly to legacy directives)
+	# Resolve per-unit zone & target assignments (behavior driven purely by unit's own zone)
 	var unit_zone: Dictionary = {}
 	if directives != null:
 		if directives.has_method(&"get_zone_for_unit") and not student_id.is_empty():
 			unit_zone = directives.get_zone_for_unit(student_id)
 		elif bool(directives.get("has_tactical_zone")):
+			var legacy_stance: int = int(directives.get("current_stance")) if (&"current_stance" in directives) else STANCE_BALANCED
 			unit_zone = {
 				"id": 0,
-				"type": "DEFENSE" if stance == STANCE_DEFENSIVE else "ASSAULT",
+				"type": "DEFENSE" if legacy_stance == STANCE_DEFENSIVE else "ASSAULT",
 				"center": directives.get("tactical_zone_center"),
 				"radius": float(directives.get("tactical_zone_radius")),
 			}
+	var unit_zone_type: String = str(unit_zone.get("type", ""))
 
 	var best: Dictionary = {
 		"action": "IDLE",
@@ -100,10 +101,10 @@ func evaluate_unit_utility(
 				}
 
 	# 3. Critical HP survival retreat toward safe cover or backline
-	var retreat_thresh: float = 0.50 if stance == STANCE_DEFENSIVE else 0.32
+	var retreat_thresh: float = 0.50 if unit_zone_type == "DEFENSE" else 0.32
 	if hp_ratio < retreat_thresh and not enemies.is_empty():
 		var retreat_pos: Vector3 = _find_retreat_position(unit, unit_pos, allies, enemies, covers)
-		var retreat_score: float = 95.0 if stance == STANCE_DEFENSIVE else 85.0
+		var retreat_score: float = 95.0 if unit_zone_type == "DEFENSE" else 85.0
 		if retreat_score > float(best["score"]):
 			best = {
 				"action": "SURVIVAL_RETREAT",
@@ -208,13 +209,51 @@ func evaluate_unit_utility(
 						"status_tag": "🚩 TIẾN VÀO VÙNG",
 					}
 
+	# 4b. Per-unit Advance Vector (Attack-Move: march toward destination while firing at enemies in range & LOS)
+	var adv_target_var: Variant = null
+	if directives != null:
+		if directives.has_method(&"get_advance_target_for_unit") and not student_id.is_empty():
+			adv_target_var = directives.get_advance_target_for_unit(student_id)
+		elif bool(directives.get("has_advance_vector")):
+			adv_target_var = directives.get("advance_target")
+	if adv_target_var is Vector3:
+		var adv_dest: Vector3 = adv_target_var as Vector3
+		var dist_adv: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(adv_dest.x, adv_dest.z))
+		if dist_adv <= 1.2:
+			if directives != null and directives.has_method(&"clear_advance_target_for_unit") and not student_id.is_empty():
+				directives.clear_advance_target_for_unit(student_id)
+		else:
+			var adv_anchor: Vector3 = _get_zone_inner_anchor(unit, unit_pos, allies, adv_dest, 2.8, [], "ASSAULT")
+			var atk_range_adv: float = maxf(6.0, float(unit.get(&"attack_range")) if (&"attack_range" in unit) else 10.0)
+			var pen_adv: int = int(unit.get(&"penetration_power")) if (&"penetration_power" in unit) else 0
+			var engage_on_march: Object = null
+			if valid_prio != null:
+				var p_pos: Vector3 = _get_pos(valid_prio)
+				if Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(p_pos.x, p_pos.z)) <= atk_range_adv + 1.0 and _check_los(unit_pos, p_pos, room_info, pen_adv):
+					engage_on_march = valid_prio
+			if engage_on_march == null:
+				var best_march_d: float = INF
+				for enemy in living_enemies:
+					var e_pos: Vector3 = _get_pos(enemy)
+					var d_e: float = Vector2(unit_pos.x, unit_pos.z).distance_to(Vector2(e_pos.x, e_pos.z))
+					if d_e <= atk_range_adv + 1.0 and d_e < best_march_d and _check_los(unit_pos, e_pos, room_info, pen_adv):
+						best_march_d = d_e
+						engage_on_march = enemy
+			var adv_score: float = 73.0 * compliance_mult
+			if adv_score > float(best["score"]):
+				best = {
+					"action": "ADVANCE_ENGAGE",
+					"target": engage_on_march,
+					"target_pos": adv_anchor,
+					"score": adv_score,
+					"status_tag": "⚔️ TIẾN CÔNG" if engage_on_march != null else "➔ TIẾN QUÂN",
+				}
+
 	# 5. Commander Priority Target directive (skipped when locked inside Defense perimeter so unit won't chase outside)
 	if not in_defense_lock and valid_prio != null:
 		var prio_score: float = 68.0 * compliance_mult
-		if stance == STANCE_ASSAULT:
+		if unit_zone_type == "ASSAULT":
 			prio_score += 15.0
-		elif stance == STANCE_DEFENSIVE:
-			prio_score -= 10.0
 		if prio_score > float(best["score"]):
 			best = {
 				"action": "FOCUS_PRIORITY_TARGET",
@@ -229,9 +268,7 @@ func evaluate_unit_utility(
 		var cover_pick: Variant = _find_best_cover(unit, unit_pos, covers, directives, living_enemies, room_info, unit_zone)
 		if cover_pick != null:
 			var cover_score: float = 46.0
-			if stance == STANCE_DEFENSIVE:
-				cover_score += 18.0
-			elif stance == STANCE_ASSAULT:
+			if unit_zone_type == "ASSAULT":
 				cover_score -= 12.0
 			if unit_role == StudentData.CombatRole.TANKER:
 				cover_score += 12.0
@@ -258,7 +295,7 @@ func evaluate_unit_utility(
 			var candidate_score: float = 36.0 - dist * 0.5 + (1.0 - e_hp) * 14.0
 			if clear_los:
 				candidate_score += 12.0
-			if stance == STANCE_ASSAULT:
+			if unit_zone_type == "ASSAULT":
 				candidate_score += 12.0
 			if candidate_score > best_enemy_score:
 				best_enemy_score = candidate_score
@@ -334,13 +371,13 @@ func _pick_enemy_in_zone(zone_center: Vector3, zone_rad: float, living_enemies: 
 			best_e = e
 	return best_e
 
-func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, directives: Object, living_enemies: Array = [], room_info: Object = null, unit_zone: Dictionary = {}) -> Variant:
+func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, _directives: Object, living_enemies: Array = [], room_info: Object = null, unit_zone: Dictionary = {}) -> Variant:
 	var best_cp: Variant = null
 	var best_score: float = -INF
 	var has_zone: bool = not unit_zone.is_empty()
+	var zone_type: String = str(unit_zone.get("type", ""))
 	var zone_center: Vector3 = unit_zone.get("center", Vector3.ZERO) if has_zone else Vector3.ZERO
 	var zone_rad: float = float(unit_zone.get("radius", 999.0)) if has_zone else 999.0
-	var stance: int = int(directives.get("current_stance")) if (directives != null and &"current_stance" in directives) else STANCE_BALANCED
 	var pen: int = int(unit.get(&"penetration_power")) if (&"penetration_power" in unit) else 0
 	var atk_range: float = maxf(6.0, float(unit.get(&"attack_range")) if (&"attack_range" in unit) else 10.0)
 
@@ -357,7 +394,7 @@ func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, directives
 		if has_zone and Vector2(cp_pos.x, cp_pos.z).distance_to(Vector2(zone_center.x, zone_center.z)) > zone_rad + 1.5:
 			continue
 
-		# Skip blind covers unless holding defensive stance, so units advance/flank after clearing nearby foes
+		# Skip blind covers unless holding a DEFENSE zone
 		var can_engage_from_cover: bool = false
 		for enemy in living_enemies:
 			var e_pos: Vector3 = _get_pos(enemy)
@@ -365,7 +402,7 @@ func _find_best_cover(unit: Object, unit_pos: Vector3, covers: Array, directives
 				if _check_los(cp_pos, e_pos, room_info, pen):
 					can_engage_from_cover = true
 					break
-		if not can_engage_from_cover and stance != STANCE_DEFENSIVE:
+		if not can_engage_from_cover and zone_type != "DEFENSE":
 			continue
 
 		var sc: float = 20.0 - d

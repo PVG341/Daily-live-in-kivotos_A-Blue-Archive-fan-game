@@ -336,6 +336,65 @@ func _run_tests() -> void:
 	arena.selection_manager.deselect_all()
 	arena.commander_system.clear_directives()
 
+	# 4f. Latest-Command-Wins, No Duplicate Full-Squad Zones, [G] vs [Shift+G], Double-Tap & Attack-Move
+	var striker3 = arena.squad_units[3]
+	# Individual -> Full Squad: full squad command issued later must replace individual zone
+	arena.commander_system.create_zone_for_units("DEFENSE", Vector3(-14.0, 0.0, 12.0), 5.0, [striker0.unit_data.id])
+	check(arena.commander_system.active_zones.size() == 1, "Single unit zone must be created")
+	var full_def_center := Vector3(10.0, 0.0, 12.0)
+	arena.commander_system.create_zone_for_units("DEFENSE", full_def_center, 6.0, [])
+	check(arena.commander_system.active_zones.size() == 1, "Full-squad zone issued after individual zone must prune old individual zone (latest wins)")
+	var s0_zone: Dictionary = arena.commander_system.get_zone_for_unit(striker0.unit_data.id)
+	check(s0_zone.get("center", Vector3.ZERO) == full_def_center, "striker0 must follow newer full-squad zone")
+
+	# Full Squad (4 explicit IDs) vs Full Squad (empty IDs): must not duplicate
+	var all_4_ids := [striker0.unit_data.id, striker1.unit_data.id, striker2.unit_data.id, striker3.unit_data.id]
+	var full_def_center_2 := Vector3(8.0, 0.0, 10.0)
+	arena.commander_system.create_zone_for_units("DEFENSE", full_def_center_2, 6.0, all_4_ids)
+	check(arena.commander_system.active_zones.size() == 1, "Placing 4-member zone over full-squad zone must replace without duplication")
+	check(bool(arena.commander_system.active_zones[0].get("is_full_squad", false)) == true, "4-member zone must be flagged as is_full_squad")
+
+	# Full Squad -> Individual: individual command issued later overrides only that unit
+	arena.commander_system.create_zone_for_units("FREESHOT", Vector3(0.0, 0.0, -14.0), 4.5, [striker2.unit_data.id])
+	check(arena.commander_system.active_zones.size() == 2, "Individual zone issued after full-squad zone must split into 2 active zones")
+	check(str(arena.commander_system.get_zone_for_unit(striker2.unit_data.id).get("type", "")) == "FREESHOT", "striker2 must follow newer FREESHOT zone")
+	check(str(arena.commander_system.get_zone_for_unit(striker0.unit_data.id).get("type", "")) == "DEFENSE", "striker0 must remain in prior DEFENSE zone")
+
+	# [G] only cancels selected unit; [Shift+G] (_clear_all_directives) cancels all
+	arena.selection_manager.deselect_all()
+	arena._clear_directives_for_selection()
+	check(arena.commander_system.active_zones.size() == 2, "[G] with no unit selected must not wipe active zones")
+	arena.selection_manager.select_unit(striker2, false)
+	arena._clear_directives_for_selection()
+	check(arena.commander_system.active_zones.size() == 1 and arena.commander_system.get_zone_for_unit(striker2.unit_data.id).is_empty(), "[G] with striker2 selected must cancel only striker2's zone")
+	check(not arena.commander_system.get_zone_for_unit(striker0.unit_data.id).is_empty(), "[G] on striker2 must keep striker0's zone intact")
+	arena._clear_all_directives()
+	check(arena.commander_system.active_zones.is_empty(), "[Shift+G] (_clear_all_directives) must cancel all zones for all units")
+	arena.selection_manager.deselect_all()
+
+	# Double-tap tool hotkey applies zone in-place at unit centroid and disarms tool
+	arena.selection_manager.select_unit(striker0, false)
+	striker0.position = Vector3(-9.0, 0.0, 11.0)
+	arena._handle_tool_hotkey(KEY_V, 2, "DEFENSE")
+	check(arena.commander_system.active_tool == 2 and arena.commander_system.active_zones.is_empty(), "Single tap [V] must only arm tool without creating zone")
+	arena._handle_tool_hotkey(KEY_V, 2, "DEFENSE")
+	check(arena.commander_system.active_tool == 0 and arena.commander_system.active_zones.size() == 1, "Double tap [VV] must place DEFENSE zone in-place and disarm tool")
+	check(arena.commander_system.get_zone_for_unit(striker0.unit_data.id).get("center", Vector3.ZERO).distance_to(Vector3(-9.0, 0.0, 11.0)) <= 0.1, "In-place zone must center on selected unit")
+	arena._clear_all_directives()
+	arena.selection_manager.deselect_all()
+
+	# Attack-Move Advance Vector evaluates ADVANCE_ENGAGE and influences unit movement/combat
+	striker0.position = Vector3(-10.0, 0.0, 14.0)
+	arena.commander_system.set_advance_target_for_units(striker0.position, Vector3(-10.0, 0.0, -4.0), [striker0.unit_data.id])
+	var adv_eval: Dictionary = arena.utility_ai.evaluate_unit_utility(
+		striker0, arena.squad_units, arena.enemy_units, arena.cover_points, arena.active_aoes, arena.commander_system, arena.current_room_info, 10
+	)
+	check(str(adv_eval.get("action", "")) == "ADVANCE_ENGAGE", "Unit with advance vector must evaluate ADVANCE_ENGAGE, got %s" % str(adv_eval.get("action", "")))
+	var s0_before_adv: Vector3 = striker0.position
+	arena.step_combat(0.5)
+	check(striker0.position.distance_to(s0_before_adv) > 1.0, "Unit under ADVANCE_ENGAGE must actively advance along vector")
+	arena._clear_all_directives()
+
 	# 5. Defeating all enemies triggers wave_cleared -> opens RoguelikeCardDraft -> select_draft_card advances room
 	for enemy in arena.enemy_units:
 		if enemy.is_alive:

@@ -37,25 +37,44 @@ var slow_mo_scale: float = 0.25
 var active_zones: Array[Dictionary] = []
 var unit_zone_map: Dictionary = {}
 var unit_target_map: Dictionary = {}
+var unit_advance_map: Dictionary = {}
+var squad_unit_ids: Array[String] = ["hoshino", "shiroko", "serika", "hanae"]
 var _next_zone_id: int = 1
 
 func _exit_tree() -> void:
 	priority_target = null
 	unit_target_map.clear()
 	unit_zone_map.clear()
+	unit_advance_map.clear()
 	active_zones.clear()
 
-## Selects an explicit Commander tool mode (click ground to place zone; re-selecting toggles off).
+## Updates the canonical list of living squad unit IDs used when a directive targets the full squad.
+func set_squad_unit_ids(unit_ids: Array) -> void:
+	var cleaned: Array[String] = []
+	for raw_id in unit_ids:
+		var sid: String = str(raw_id)
+		if not sid.is_empty() and sid != "*" and not cleaned.has(sid):
+			cleaned.append(sid)
+	if not cleaned.is_empty():
+		squad_unit_ids = cleaned
+
+func _resolve_target_unit_ids(unit_ids: Array) -> Array[String]:
+	var resolved: Array[String] = []
+	for raw_uid in unit_ids:
+		var uid: String = str(raw_uid)
+		if not uid.is_empty() and uid != "*" and not resolved.has(uid):
+			resolved.append(uid)
+	if resolved.is_empty():
+		return squad_unit_ids.duplicate()
+	return resolved
+
+## Selects an explicit Commander tool mode without changing unit behavior until placed.
 func select_tool(tool: int) -> void:
 	var clamped: int = clampi(tool, ToolMode.NONE, ToolMode.FREESHOT_ZONE)
 	if clamped == active_tool and clamped != ToolMode.NONE:
 		cancel_tool()
 		return
 	active_tool = clamped
-	if active_tool == ToolMode.ASSAULT_ZONE:
-		set_squad_stance(SquadStance.ALL_OUT_ASSAULT)
-	elif active_tool == ToolMode.DEFENSE_ZONE:
-		set_squad_stance(SquadStance.DEFENSIVE_HOLD)
 	tool_changed.emit(active_tool, get_tool_name())
 	directive_changed.emit(get_directive_summary())
 
@@ -93,17 +112,22 @@ func get_stance_name() -> String:
 		_:
 			return "GIAO TRANH"
 
-## Marks (or clears) the squad's commander-assigned priority target enemy.
+## Marks (or clears) the squad's commander-assigned priority target enemy (latest command wins).
 func set_priority_target(enemy: Node3D) -> void:
 	if enemy == null or not is_instance_valid(enemy):
 		priority_target = null
+		unit_target_map.clear()
 	else:
 		var alive_val: Variant = enemy.get(&"is_alive")
 		priority_target = enemy if (alive_val == null or bool(alive_val)) else null
+		unit_target_map.clear()
+		if priority_target != null:
+			for sid: String in squad_unit_ids:
+				unit_target_map[sid] = priority_target
 	priority_target_changed.emit(priority_target)
 	directive_changed.emit(get_directive_summary())
 
-## Assigns a priority target enemy for specific unit IDs (or squad-wide if empty).
+## Assigns a priority target enemy for specific unit IDs (or full squad if empty; latest command wins).
 func set_target_for_units(enemy: Node3D, unit_ids: Array = []) -> void:
 	if unit_ids.is_empty():
 		set_priority_target(enemy)
@@ -113,10 +137,8 @@ func set_target_for_units(enemy: Node3D, unit_ids: Array = []) -> void:
 		var alive_val: Variant = enemy.get(&"is_alive")
 		if alive_val == null or bool(alive_val):
 			valid_enemy = enemy
-	for raw_uid in unit_ids:
-		var uid: String = str(raw_uid)
-		if uid.is_empty():
-			continue
+	var assigned: Array[String] = _resolve_target_unit_ids(unit_ids)
+	for uid: String in assigned:
 		if valid_enemy == null:
 			unit_target_map.erase(uid)
 		else:
@@ -142,36 +164,30 @@ func get_target_for_unit(student_id: String) -> Node3D:
 		return node_target
 	return get_valid_priority_target()
 
-## Creates a typed tactical zone for specific unit IDs (or ["*"] squad-wide) and returns its ID.
+## Creates a typed tactical zone for specific unit IDs (or full squad if empty; latest command wins).
 func create_zone_for_units(zone_type: String, center: Vector3, radius: float, unit_ids: Array = []) -> int:
 	var resolved_type: String = zone_type.to_upper()
 	if resolved_type != "ASSAULT" and resolved_type != "DEFENSE" and resolved_type != "FREESHOT":
 		resolved_type = "ASSAULT"
 	var clean_center := Vector3(center.x, 0.0, center.z)
 	var clamped_radius: float = clampf(radius, 3.5, 14.0)
+	var assigned: Array[String] = _resolve_target_unit_ids(unit_ids)
 
-	var assigned: Array[String] = []
-	if unit_ids.is_empty():
-		assigned.append("*")
-	else:
-		for raw_uid in unit_ids:
-			var uid: String = str(raw_uid)
-			if not uid.is_empty() and not assigned.has(uid):
-				assigned.append(uid)
-		if assigned.is_empty():
-			assigned.append("*")
-
-	var is_wildcard: bool = assigned.has("*")
+	# Latest command wins: remove assigned units from any prior zones and clear their old advance vectors
 	for existing: Dictionary in active_zones:
 		var existing_ids: Array = existing.get("assigned_unit_ids", [])
+		existing_ids.erase("*")
 		for uid: String in assigned:
 			existing_ids.erase(uid)
-			if not is_wildcard and unit_zone_map.has(uid):
-				unit_zone_map.erase(uid)
-	if is_wildcard:
-		unit_zone_map.clear()
+			unit_zone_map.erase(uid)
+			unit_advance_map.erase(uid)
+		existing["is_full_squad"] = (not squad_unit_ids.is_empty() and existing_ids.size() >= squad_unit_ids.size())
+	for uid: String in assigned:
+		unit_advance_map.erase(uid)
+	if unit_advance_map.is_empty():
+		has_advance_vector = false
 
-	# Prune zones that no longer own any units or wildcard assignment
+	# Prune any zone that no longer owns any units
 	var kept_zones: Array[Dictionary] = []
 	for existing: Dictionary in active_zones:
 		var existing_ids: Array = existing.get("assigned_unit_ids", [])
@@ -181,24 +197,25 @@ func create_zone_for_units(zone_type: String, center: Vector3, radius: float, un
 
 	var zone_id: int = _next_zone_id
 	_next_zone_id += 1
+	var full_squad_flag: bool = not squad_unit_ids.is_empty() and assigned.size() >= squad_unit_ids.size()
 	var zone_dict: Dictionary = {
 		"id": zone_id,
 		"type": resolved_type,
 		"center": clean_center,
 		"radius": clamped_radius,
 		"assigned_unit_ids": assigned,
+		"is_full_squad": full_squad_flag,
 	}
 	active_zones.append(zone_dict)
-	if not is_wildcard:
-		for uid: String in assigned:
-			unit_zone_map[uid] = zone_id
+	for uid: String in assigned:
+		unit_zone_map[uid] = zone_id
 
 	_sync_legacy_zone_fields()
 	zones_updated.emit(active_zones.duplicate(true))
 	directive_changed.emit(get_directive_summary())
 	return zone_id
 
-## Returns the active zone Dictionary assigned to a unit (specific ID first, then wildcard "*").
+## Returns the active zone Dictionary assigned to a unit.
 func get_zone_for_unit(student_id: String) -> Dictionary:
 	if unit_zone_map.has(student_id):
 		var target_id: int = int(unit_zone_map[student_id])
@@ -208,34 +225,86 @@ func get_zone_for_unit(student_id: String) -> Dictionary:
 	for i: int in range(active_zones.size() - 1, -1, -1):
 		var z: Dictionary = active_zones[i]
 		var ids: Array = z.get("assigned_unit_ids", [])
-		if ids.has(student_id) or ids.has("*"):
+		if ids.has(student_id):
 			return z
 	return {}
 
-## Places a circular tactical zone using the current stance (legacy helper -> multi-zone pool).
+## Places a circular tactical zone for the full squad (legacy helper -> multi-zone pool).
 func place_tactical_zone(center: Vector3, radius: float = 6.5) -> void:
 	var ztype: String = "DEFENSE" if current_stance == SquadStance.DEFENSIVE_HOLD else "ASSAULT"
 	create_zone_for_units(ztype, center, radius, [])
 
-## Sets a directional advance vector WITHOUT implicitly spawning a tactical zone.
-func set_advance_vector(from_pos: Vector3, to_pos: Vector3) -> void:
+## Sets a directional attack-move advance vector for specific units (or full squad if empty) WITHOUT spawning a zone.
+func set_advance_target_for_units(from_pos: Vector3, to_pos: Vector3, unit_ids: Array = []) -> void:
+	var clean_from := Vector3(from_pos.x, 0.0, from_pos.z)
+	var clean_to := Vector3(to_pos.x, 0.0, to_pos.z)
+	var assigned: Array[String] = _resolve_target_unit_ids(unit_ids)
 	has_advance_vector = true
-	advance_origin = Vector3(from_pos.x, 0.0, from_pos.z)
-	advance_target = Vector3(to_pos.x, 0.0, to_pos.z)
-	directive_changed.emit(get_directive_summary())
+	advance_origin = clean_from
+	advance_target = clean_to
 
-## Clears zone/target directives for specific unit IDs (or all directives if empty).
-func clear_directives_for_units(unit_ids: Array = []) -> void:
-	if unit_ids.is_empty():
-		clear_directives()
-		return
-	for raw_uid in unit_ids:
-		var uid: String = str(raw_uid)
-		unit_target_map.erase(uid)
+	# Latest command wins: remove these units from older zones so they advance along the new vector
+	for uid: String in assigned:
+		unit_advance_map[uid] = clean_to
 		unit_zone_map.erase(uid)
 		for z: Dictionary in active_zones:
 			var ids: Array = z.get("assigned_unit_ids", [])
 			ids.erase(uid)
+			z["is_full_squad"] = (not squad_unit_ids.is_empty() and ids.size() >= squad_unit_ids.size())
+	var kept_zones: Array[Dictionary] = []
+	for z: Dictionary in active_zones:
+		var ids: Array = z.get("assigned_unit_ids", [])
+		if not ids.is_empty():
+			kept_zones.append(z)
+	var zones_changed: bool = kept_zones.size() != active_zones.size()
+	active_zones = kept_zones
+	_sync_legacy_zone_fields()
+	if zones_changed:
+		zones_updated.emit(active_zones.duplicate(true))
+	directive_changed.emit(get_directive_summary())
+
+## Returns the active advance-move destination Vector3 for a unit, or null if none.
+func get_advance_target_for_unit(student_id: String) -> Variant:
+	if unit_advance_map.has(student_id):
+		return unit_advance_map[student_id]
+	return null
+
+## Clears a unit's advance-move destination upon arrival.
+func clear_advance_target_for_unit(student_id: String) -> void:
+	if not unit_advance_map.has(student_id):
+		return
+	unit_advance_map.erase(student_id)
+	if unit_advance_map.is_empty():
+		has_advance_vector = false
+		advance_origin = Vector3.ZERO
+		advance_target = Vector3.ZERO
+	directive_changed.emit(get_directive_summary())
+
+## Sets a directional advance vector for the full squad WITHOUT implicitly spawning a tactical zone.
+func set_advance_vector(from_pos: Vector3, to_pos: Vector3) -> void:
+	set_advance_target_for_units(from_pos, to_pos, [])
+
+## Clears zone/target/advance directives for specific unit IDs (if empty, does nothing; use clear_directives for all).
+func clear_directives_for_units(unit_ids: Array = []) -> void:
+	if unit_ids.is_empty():
+		return
+	for raw_uid in unit_ids:
+		var uid: String = str(raw_uid)
+		if uid.is_empty():
+			continue
+		unit_target_map.erase(uid)
+		unit_zone_map.erase(uid)
+		unit_advance_map.erase(uid)
+		for z: Dictionary in active_zones:
+			var ids: Array = z.get("assigned_unit_ids", [])
+			ids.erase(uid)
+			z["is_full_squad"] = (not squad_unit_ids.is_empty() and ids.size() >= squad_unit_ids.size())
+	if unit_target_map.is_empty():
+		priority_target = null
+	if unit_advance_map.is_empty():
+		has_advance_vector = false
+		advance_origin = Vector3.ZERO
+		advance_target = Vector3.ZERO
 	var kept_zones: Array[Dictionary] = []
 	for z: Dictionary in active_zones:
 		var ids: Array = z.get("assigned_unit_ids", [])
@@ -246,7 +315,7 @@ func clear_directives_for_units(unit_ids: Array = []) -> void:
 	zones_updated.emit(active_zones.duplicate(true))
 	directive_changed.emit(get_directive_summary())
 
-## Clears all spatial directives, zones, targets, and active tool while keeping current stance.
+## Clears all spatial directives, zones, targets, advance vectors, and active tool for the entire squad.
 func clear_directives() -> void:
 	priority_target = null
 	has_tactical_zone = false
@@ -258,6 +327,7 @@ func clear_directives() -> void:
 	active_zones.clear()
 	unit_zone_map.clear()
 	unit_target_map.clear()
+	unit_advance_map.clear()
 	active_tool = ToolMode.NONE
 	tool_changed.emit(active_tool, get_tool_name())
 	zones_updated.emit([])
@@ -305,6 +375,8 @@ func get_directive_summary() -> String:
 	parts.append("Công cụ: %s" % get_tool_name())
 	if active_zones.size() > 0:
 		parts.append("%d Vùng tác chiến" % active_zones.size())
+	if has_advance_vector or not unit_advance_map.is_empty():
+		parts.append("Hướng tiến công")
 	if get_valid_priority_target() != null or not unit_target_map.is_empty():
 		parts.append("Mục tiêu ưu tiên")
 	if tactical_slow_mo:
