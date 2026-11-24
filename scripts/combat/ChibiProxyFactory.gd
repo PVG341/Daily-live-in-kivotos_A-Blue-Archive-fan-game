@@ -212,6 +212,39 @@ func attach_unit_visuals(
 	hp_label.text = display_name
 	vis_root.add_child(hp_label)
 
+## Attaches a metallic frontal ballistic riot-shield mesh inside VisualRoot/FacingPivot.
+func attach_front_shield_visual(unit: Node3D, scale_factor: float = 1.0, facing: Vector3 = Vector3(0.0, 0.0, -1.0)) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	var vis_root := unit.get_node_or_null("VisualRoot") as Node3D
+	if vis_root == null:
+		return
+	var pivot := vis_root.get_node_or_null("FacingPivot") as Node3D
+	if pivot == null:
+		pivot = Node3D.new()
+		pivot.name = "FacingPivot"
+		vis_root.add_child(pivot)
+	var f_xz := Vector2(facing.x, facing.z)
+	if f_xz.length() > 0.01:
+		var fn: Vector2 = f_xz.normalized()
+		pivot.rotation.y = atan2(fn.x, fn.y)
+
+	var existing_shield := pivot.get_node_or_null("FrontShieldMesh") as MeshInstance3D
+	if existing_shield != null:
+		return
+	var shield_inst := MeshInstance3D.new()
+	shield_inst.name = "FrontShieldMesh"
+	var shield_mesh := BoxMesh.new()
+	shield_mesh.size = Vector3(0.95, 0.90, 0.14) * scale_factor
+	var shield_mat := StandardMaterial3D.new()
+	shield_mat.albedo_color = Color(0.22, 0.28, 0.36, 1.0)
+	shield_mat.metallic = 0.55
+	shield_mat.roughness = 0.45
+	shield_mesh.material = shield_mat
+	shield_inst.mesh = shield_mesh
+	shield_inst.position = Vector3(0.0, 0.55 * scale_factor, 0.55 * scale_factor)
+	pivot.add_child(shield_inst)
+
 ## Toggles the ground RTS selection ring and attack range ring visibility on a unit.
 func set_unit_selected(unit: Node3D, selected: bool, show_range: bool = true) -> void:
 	if unit == null or not is_instance_valid(unit):

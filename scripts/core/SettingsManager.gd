@@ -16,6 +16,8 @@ var bloom_enabled: bool = true
 var dof_enabled: bool = false
 var particles_enabled: bool = true
 var show_group_frame: bool = false
+var screen_shake_strength: float = 1.0
+var reduce_flashing: bool = false
 
 var _fallback_warned: bool = false
 
@@ -97,6 +99,14 @@ func apply_show_group_frame(enabled: bool) -> void:
 	show_group_frame = enabled
 	settings_changed.emit()
 
+func apply_screen_shake_strength(strength: float) -> void:
+	screen_shake_strength = clampf(strength, 0.0, 1.0)
+	settings_changed.emit()
+
+func apply_reduce_flashing(enabled: bool) -> void:
+	reduce_flashing = enabled
+	settings_changed.emit()
+
 func reset_to_defaults() -> void:
 	apply_render_scale(1.0)
 	apply_draw_distance(120.0)
@@ -104,6 +114,8 @@ func reset_to_defaults() -> void:
 	apply_max_active_students(5)
 	apply_post_processing(true, false, true)
 	apply_show_group_frame(false)
+	apply_screen_shake_strength(1.0)
+	apply_reduce_flashing(false)
 
 func to_dict() -> Dictionary:
 	return {
@@ -115,6 +127,8 @@ func to_dict() -> Dictionary:
 		"dof_enabled": dof_enabled,
 		"particles_enabled": particles_enabled,
 		"show_group_frame": show_group_frame,
+		"screen_shake_strength": screen_shake_strength,
+		"reduce_flashing": reduce_flashing,
 	}
 
 func from_dict(data: Dictionary) -> void:
@@ -134,6 +148,10 @@ func from_dict(data: Dictionary) -> void:
 		particles_enabled = bool(data["particles_enabled"])
 	if data.has("show_group_frame"):
 		show_group_frame = bool(data["show_group_frame"])
+	if data.has("screen_shake_strength"):
+		apply_screen_shake_strength(float(data["screen_shake_strength"]))
+	if data.has("reduce_flashing"):
+		reduce_flashing = bool(data["reduce_flashing"])
 	settings_changed.emit()
 
 func save_settings() -> bool:

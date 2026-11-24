@@ -17,6 +17,9 @@ const DEFAULT_INPUT_BINDINGS := {
 @export var min_zoom: float = 5.0
 @export var max_zoom: float = 25.0
 @export var drag_pan_sensitivity: float = 0.0022
+@export var shake_decay: float = 1.8
+@export var max_shake_offset: Vector2 = Vector2(0.45, 0.34)
+@export var max_shake_roll: float = 0.025
 @export var bounds_min: Vector2 = Vector2(-50.0, -50.0)
 @export var bounds_max: Vector2 = Vector2(50.0, 50.0)
 
@@ -24,6 +27,9 @@ var current_zoom: float = 12.0
 var yaw_degrees: float = 35.264
 var pitch_degrees: float = -45.0
 var is_drag_panning: bool = false
+var shake_strength: float = 1.0
+var trauma: float = 0.0
+var _shake_time: float = 0.0
 var _last_drag_pos: Vector2 = Vector2.ZERO
 
 var pitch_pivot: Node3D = null
@@ -47,6 +53,38 @@ func _process(delta: float) -> void:
 			rot_axis -= 1.0
 	if not is_zero_approx(rot_axis):
 		rotate_yaw(rot_axis * rad_to_deg(rotate_speed) * delta)
+	tick_shake(delta)
+
+## Adds trauma in [0.0, 1.0] for quadratic decaying camera shake.
+func add_trauma(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	trauma = clampf(trauma + amount, 0.0, 1.0)
+
+## Advances real-time camera shake decay and applies visual-only offsets on IsometricCamera.
+func tick_shake(delta: float) -> void:
+	_cache_nodes()
+	if isometric_camera == null:
+		trauma = maxf(0.0, trauma - shake_decay * maxf(0.0, delta))
+		return
+	if trauma <= 0.0:
+		if not is_zero_approx(isometric_camera.h_offset) or not is_zero_approx(isometric_camera.v_offset) or not is_zero_approx(isometric_camera.rotation.z):
+			isometric_camera.h_offset = 0.0
+			isometric_camera.v_offset = 0.0
+			isometric_camera.rotation.z = 0.0
+		return
+	var real_dt: float = maxf(0.0, delta) / maxf(Engine.time_scale, 0.0001)
+	trauma = maxf(0.0, trauma - shake_decay * real_dt)
+	if trauma <= 0.0:
+		isometric_camera.h_offset = 0.0
+		isometric_camera.v_offset = 0.0
+		isometric_camera.rotation.z = 0.0
+		return
+	var shake: float = trauma * trauma * clampf(shake_strength, 0.0, 1.0)
+	_shake_time += real_dt * 30.0
+	isometric_camera.h_offset = max_shake_offset.x * shake * sin(_shake_time * 1.7)
+	isometric_camera.v_offset = max_shake_offset.y * shake * sin(_shake_time * 2.3)
+	isometric_camera.rotation.z = max_shake_roll * shake * sin(_shake_time * 1.1)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:

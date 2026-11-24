@@ -221,6 +221,24 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
   * `UtilityAIManager.gd`, `CombatArenaController.gd`, `CombatHUD.gd`: Memoize `_check_los()` trong cùng lượt đánh giá, fast axis reject trong `_find_best_cover()`, giảm tần suất chạy AI xuống `AI_EVAL_INTERVAL = 0.15s` lệch pha giữa 4 Striker kèm `_invalidate_ai_cache()`, và dirty-check HP/trạng thái nhãn & chân dung HUD.
 * **Hotfix Boss AoE (`previously freed instance`):** Trong `_tick_striker()`, ép đánh giá lại khi `cached_action == "EVADE_AOE"` và kiểm tra `typeof(...) == TYPE_OBJECT and is_instance_valid(...)` trước toán tử `is`; gọi `_invalidate_ai_cache()` trong `_tick_active_aoes()` và `_clear_active_aoes()`. Đã thêm 2 tick hồi quy trong `tests/test_combat_arena_flow.gd`.
 
+---
+
+## 13. Phase E — Phân Vai Vũ Khí/Kẻ Địch, EX Caster Chuyên Biệt, Game Feel (VFX/SFX) & Blue Archive Tactical HUD
+
+* **Phân vai Vũ khí Striker & EX Caster Riêng Biệt (`CombatUnit.gd`, `SkillData.gd`, `UtilityAIManager.gd`, `CombatArenaController.gd`):**
+  * **4 Striker đặc trưng vai trò:** **Hoshino (`SG`)** Tanker mang khiên chắn trước (`frontal_shield_ratio = 0.40`, `FrontShieldMesh`), **Shiroko (`SR`)** tầm xa `16.5m` có xuyên giáp/xuyên khiên `penetration_power = 2` và ưu tiên điểm cao chiến thuật (`HIGH_GROUND` `+10.0`), **Serika (`ARTILLERY`)** gây sát thương nổ lan AoE mỗi phát bắn (`is_aoe_attacker = true`), và **Hanae (`HG`)** Healer.
+  * **Tách EX Caster Độc Lập & Khóa Caster Bị Hạ Gục:** Gắn `caster_id`/`caster_name` cho kỹ năng EX: **`[3] Shotgun Breach`** lấy vị trí Hoshino và **`[4] Railgun Beam`** lấy vị trí Shiroko bất kể đang chọn đơn vị nào; `[1] Missile Barrage` và `[2] Team Heal` giữ vai trò Special chi viện. Khóa kích hoạt và hiển thị trạng thái `DOWN` trên HUD nếu caster bị hạ gục.
+* **Kẻ Địch Đa Dạng & Đánh Thức Phân Khu Seamless (`EnemyUnit.gd`, `EnemyAI.gd`, `ProjectileManager.gd`, `ChibiProxyFactory.gd`):**
+  * Bổ sung 3 loại địch chiến thuật: **`GRUNT` (`AR`)**, **`SHIELD_HEAVY` (`SG`, khiên trước `frontal_shield_ratio = 0.55` buộc đánh bọc sườn hoặc dùng `penetration_power >= 2`)**, và **`SNIPER` (`SR`, biết `KITE_BACK` lùi giữ cự ly trong bán kính `12m` quanh `patrol_origin`)**.
+  * Hướng xoay mặt độc lập qua `VisualRoot/FacingPivot` (`update_facing_toward()`), `take_directional_damage()` kèm tín hiệu `projectile_impact`, và cơ chế `is_alerted` / `detection_radius` đánh thức dây chuyền cả tổ đội (`_alert_enemy_squad()` -> `"❗ PHÁT HIỆN!"`).
+* **Game Feel, Hiệu Ứng 3D & Âm Thanh Tổng Hợp (`CombatFeelManager.gd`, `RTSCamera3D.gd`, `SettingsManager.gd`):**
+  * Triển khai **rung camera bậc hai theo `trauma` (`RTSCamera3D.tick_shake`)**, **real-time Hit-Stop** (`get_hit_stop_scale()` đồng bộ không đè Slow-Mo `[TAB]`), tia đạn theo lớp vũ khí/Railgun, quạt lửa Shotgun `spawn_cone_flash()`, sóng nổ `spawn_explosion_burst()`, hiệu ứng giật lún thân `trigger_unit_hit_flash()`, cùng pool âm thanh `AudioStreamWAV` (`shot_ar`, `shot_sg`, `shot_sr`, `explosion`, `breach`, `heal`, `alert`, `ui_click`).
+  * Bổ sung tùy chọn tiếp cận `screen_shake_strength` và `reduce_flashing` trong `SettingsManager`.
+* **Blue Archive Tactical HUD (`CombatHUD.gd` & `scenes/ui/combat_hud.tscn`):**
+  * Bố cục lại HUD phong cách Blue Archive gọn gàng, không chồng lấp ở `1152×648` và `1280×720`: thẻ chân dung `PanelContainer` gắn huy hiệu vũ khí (`[SG]`/`[SR]`/`[ARTILLERY]`/`[HG]`), thanh máu, thẻ EX hiển thị Cost/Cooldown/Caster, thanh Cost phân đoạn cyan kèm `CostValueLabel`, `SectorProgressLabel` và `SlowMoBadge`, tối ưu bằng `_ui_styles` và dirty-check.
+* **Kiểm thử Xác minh:** Bổ sung `# 5b.` và `# 5c.` trong `tests/test_combat_arena_flow.gd`; toàn bộ **25/25 suite headless pass** (`OBJECT_ORPHAN_NODE_COUNT == 0`) và smoke-test trực tiếp `scenes/combat/combat_arena.tscn --quit-after 60` đạt `0` lỗi runtime.
+
+
 
 
 

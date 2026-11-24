@@ -5,8 +5,20 @@ extends CombatUnit
 @export var enemy_type: String = "GRUNT"
 @export var behavior: String = "AGGRESSIVE"
 @export var loot_table: Array[Dictionary] = []
+@export var detection_radius: float = 28.0
+@export var is_alerted: bool = true
 
+var patrol_origin: Vector3 = Vector3.ZERO
 var dropped_loot: Array[Dictionary] = []
+
+## Alerts this enemy so it enters combat immediately.
+func alert() -> void:
+	is_alerted = true
+
+## Marks enemy alerted when taking damage before delegating to CombatUnit.take_damage().
+func take_damage(amount: int, source: Object = null) -> int:
+	is_alerted = true
+	return super.take_damage(amount, source)
 
 ## Rolls each entry in loot_table against its drop chance, updates dropped_loot, and returns it.
 func roll_loot(rng_roll: float = -1.0) -> Array[Dictionary]:

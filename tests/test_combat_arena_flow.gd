@@ -306,6 +306,7 @@ func _run_tests() -> void:
 	arena.commander_system.clear_directives()
 
 	# Verify non-blocking HOLD_FIRE allows MOVE orders while suppressing all shots
+	arena.projectile_manager.clear_projectiles()
 	striker0.position = Vector3(-22.0, 0.0, 14.0)
 	striker0.clear_player_order()
 	var hold_test_enemy = null
@@ -317,7 +318,8 @@ func _run_tests() -> void:
 	if hold_test_enemy != null:
 		hold_test_enemy.position = Vector3(-22.0, 0.0, 9.0)
 	arena._unit_cooldowns[striker0.get_instance_id()] = 0.0
-	striker0.set_hold_fire(true)
+	for su in arena.squad_units:
+		su.set_hold_fire(true)
 	arena.selection_manager.select_unit(striker0, false)
 	var move_goal := Vector3(-22.0, 0.0, 10.0)
 	arena.selection_manager.issue_move_order(move_goal)
@@ -331,7 +333,8 @@ func _run_tests() -> void:
 	check(striker0_shots == 0, "Unit under HOLD_FIRE must fire zero projectiles while moving/in combat")
 	if hold_test_enemy != null:
 		check(hold_test_enemy.current_hp == enemy_hp_before_hold, "Enemy must take zero damage from HOLD_FIRE unit")
-	striker0.set_hold_fire(false)
+	for su in arena.squad_units:
+		su.set_hold_fire(false)
 	striker0.clear_player_order()
 	arena.selection_manager.deselect_all()
 	arena.commander_system.clear_directives()
@@ -395,6 +398,93 @@ func _run_tests() -> void:
 	check(striker0.position.distance_to(s0_before_adv) > 1.0, "Unit under ADVANCE_ENGAGE must actively advance along vector")
 	arena._clear_all_directives()
 
+	# 5b. Phase E (Part A) — Striker Weapon Classes, Dedicated EX Casters, Feel & Blue Archive HUD
+	var hoshino_u = null
+	var shiroko_u = null
+	var serika_u = null
+	var hanae_u = null
+	for su in arena.squad_units:
+		if su.unit_data != null:
+			match su.unit_data.id:
+				"hoshino":
+					hoshino_u = su
+				"shiroko":
+					shiroko_u = su
+				"serika":
+					serika_u = su
+				"hanae":
+					hanae_u = su
+	check(hoshino_u != null and hoshino_u.weapon_class == "SG" and hoshino_u.frontal_shield_ratio >= 0.40, "Hoshino must be SG Tanker with frontal_shield_ratio >= 0.40")
+	check(hoshino_u != null and hoshino_u.get_node_or_null("VisualRoot/FacingPivot/FrontShieldMesh") != null, "Hoshino must have FrontShieldMesh visual attached")
+	check(shiroko_u != null and shiroko_u.weapon_class == "SR" and shiroko_u.penetration_power >= 2, "Shiroko must be SR Striker with penetration_power >= 2")
+	check(serika_u != null and serika_u.weapon_class == "ARTILLERY" and serika_u.is_aoe_attacker, "Serika must be ARTILLERY Striker with is_aoe_attacker")
+	check(hanae_u != null and hanae_u.weapon_class == "HG", "Hanae must be HG Healer Striker")
+
+	# Dedicated EX caster origin decoupling & dead-caster lock
+	var shotgun_idx: int = -1
+	var railgun_idx: int = -1
+	for i in range(arena.ex_skill_system.registered_skills.size()):
+		var rsk = arena.ex_skill_system.registered_skills[i]
+		if rsk.caster_id == "hoshino":
+			shotgun_idx = i
+		elif rsk.caster_id == "shiroko":
+			railgun_idx = i
+	check(shotgun_idx >= 0 and railgun_idx >= 0, "Shotgun Breach (hoshino) and Railgun Beam (shiroko) must have distinct caster_id assignments")
+	var saved_h_pos: Vector3 = hoshino_u.position
+	var saved_s_pos: Vector3 = shiroko_u.position
+	hoshino_u.position = Vector3(-7.0, 0.0, 2.0)
+	shiroko_u.position = Vector3(7.0, 0.0, 2.0)
+	arena.selection_manager.select_unit(hanae_u, false)
+	var sk_sg = arena.ex_skill_system.registered_skills[shotgun_idx]
+	var sk_sr = arena.ex_skill_system.registered_skills[railgun_idx]
+	check(arena._get_skill_caster_origin(sk_sg).distance_to(hoshino_u.position) < 0.1, "Shotgun Breach origin must bind to Hoshino even while Hanae is selected")
+	check(arena._get_skill_caster_origin(sk_sr).distance_to(shiroko_u.position) < 0.1, "Railgun Beam origin must bind to Shiroko even while Hanae is selected")
+	arena.ex_skill_system.cost_bar.current_cost = 10.0
+	shiroko_u.is_alive = false
+	arena._begin_special_skill_targeting(railgun_idx)
+	check(arena.targeting_overlay.is_targeting == false, "Dead EX caster (Shiroko) must block targeting Railgun Beam")
+	arena.step_combat(0.016)
+	var skill_box_chk = arena.combat_hud.find_child("SpecialSkillButtons", true, false)
+	check(skill_box_chk != null and skill_box_chk.get_child_count() >= 4, "CombatHUD must display 4 EX Skill card buttons")
+	if skill_box_chk != null and railgun_idx < skill_box_chk.get_child_count():
+		var sr_btn = skill_box_chk.get_child(railgun_idx) as Button
+		check(sr_btn != null and sr_btn.text.contains("DOWN") and sr_btn.text.contains("Shiroko"), "EX card for dead caster must show DOWN badge and Shiroko caster label")
+	shiroko_u.is_alive = true
+	hoshino_u.position = saved_h_pos
+	shiroko_u.position = saved_s_pos
+	arena.selection_manager.deselect_all()
+	arena.step_combat(0.016)
+
+	# Blue Archive HUD visual structure & widgets
+	var cost_bar_chk = arena.combat_hud.find_child("CostProgressBar", true, false)
+	check(cost_bar_chk != null and cost_bar_chk.get_node_or_null("CostValueLabel") != null, "Blue Archive CostProgressBar must contain CostValueLabel")
+	var slow_badge_chk = arena.combat_hud.find_child("SlowMoBadge", true, false)
+	check(slow_badge_chk != null, "Blue Archive HUD must create SlowMoBadge indicator")
+	var hoshino_card = arena.combat_hud.find_child("Portrait_hoshino", true, false)
+	check(hoshino_card is PanelContainer, "Striker portrait cards must use PanelContainer styling")
+	if hoshino_card != null:
+		var name_lbl = hoshino_card.find_child("NameLabel", true, false) as Label
+		check(name_lbl != null and name_lbl.text.contains("[SG]"), "Hoshino portrait card NameLabel must display [SG] weapon badge")
+
+	# Feel Manager: real-time hit-stop + VFX lifecycle + camera trauma shake
+	check(arena.feel_manager != null, "CombatArenaController must own CombatFeelManager")
+	arena.camera_rig.trauma = 0.0
+	arena.camera_rig.add_trauma(0.65)
+	check(arena.camera_rig.trauma > 0.5, "RTSCamera3D.add_trauma must accumulate trauma")
+	arena.camera_rig.tick_shake(0.1)
+	check(arena.camera_rig.trauma < 0.65, "RTSCamera3D.tick_shake must decay trauma in real time")
+	arena.camera_rig.tick_shake(2.0)
+	check(is_zero_approx(arena.camera_rig.trauma), "RTSCamera3D.tick_shake must fully decay trauma back to 0")
+	arena.feel_manager.trigger_hit_stop(0.10, 0.10)
+	check(arena.feel_manager.get_hit_stop_scale() <= 0.11, "trigger_hit_stop must slow simulation factor immediately")
+	arena.feel_manager.spawn_tracer(Vector3.ZERO, Vector3(0.0, 0.0, -5.0), Color.CYAN, 0.1, 0.25)
+	arena.feel_manager.spawn_explosion_burst(Vector3.ZERO, 2.0, Color.ORANGE, 0.25)
+	arena.feel_manager.tick_effects(0.04)
+	check(arena.feel_manager.get_hit_stop_scale() <= 0.11, "Hit-stop must stay active before duration elapses")
+	arena.feel_manager.tick_effects(0.5)
+	check(is_equal_approx(arena.feel_manager.get_hit_stop_scale(), 1.0), "tick_effects must restore hit-stop scale to 1.0 after duration")
+	check(arena.feel_manager._active_vfx.is_empty(), "tick_effects must clean up and free expired VFX nodes")
+
 	# 5. Phase D & Progression — Defeating all enemies unlocks SectorGate_0 -> opens RoguelikeCardDraft -> select_draft_card advances seamlessly without teleporting squad
 	check(arena.encounter_zone_manager != null and arena.encounter_zone_manager.active_sectors.size() == 4, "Seamless battlefield must stitch all 4 encounter zone sectors simultaneously")
 	check(arena.encounter_zone_manager.sector_connectors.size() == 3, "Seamless battlefield must build 3 connecting thoroughfares between the 4 sectors")
@@ -416,6 +506,16 @@ func _run_tests() -> void:
 	check(arena.card_manager.get_active_buffs().size() == 1, "Selected card must be recorded in card_manager active buffs")
 	check(arena.room_manager.get_current_room_index() == 1, "Room manager must advance to room 1 after card draft")
 
+	var has_sec1_combat: bool = false
+	var sec1_all_unalerted: bool = true
+	for eu in arena.enemy_units:
+		if eu.is_alive:
+			has_sec1_combat = true
+			if eu.is_alerted:
+				sec1_all_unalerted = false
+	if has_sec1_combat:
+		check(sec1_all_unalerted, "Sector 1 enemies must spawn unalerted (is_alerted == false) in seamless battlefield")
+
 	var sec0_node = arena.encounter_zone_manager.get_sector_node(0)
 	var sec1_node = arena.encounter_zone_manager.get_sector_node(1)
 	check(sec0_node != null and is_instance_valid(sec0_node) and sec0_node.is_inside_tree(), "Sector 0 must remain alive in the 3D world after advancing to Sector 1")
@@ -425,6 +525,48 @@ func _run_tests() -> void:
 	check(arena.combat_hud.displayed_sector_summary.contains("2/4"), "CombatHUD SectorProgressLabel must highlight active sector 2/4")
 	arena.step_combat(0.5)
 	check(striker0.position.z < custom_s0_pos.z - 1.0, "Striker must march north through the unlocked SectorGate toward Sector 1")
+
+	# 5c. Phase E (Part B) — Seamless Sector 1 unalerted stealth state, SHIELD_HEAVY frontal mitigation / pen=2 bypass & SNIPER kiting
+	if not has_sec1_combat:
+		arena._on_room_loaded(1, {"room_type": "COMBAT", "enemy_wave_def": {"enemy_count": 3, "difficulty": 1}})
+		var fresh_sec1_unalerted: bool = true
+		for eu in arena.enemy_units:
+			if eu.is_alive and eu.is_alerted:
+				fresh_sec1_unalerted = false
+		check(fresh_sec1_unalerted and not arena.enemy_units.is_empty(), "Sector 1 COMBAT wave must spawn unalerted enemies")
+
+	var sec1_shield_heavy = null
+	var sec1_sniper = null
+	for eu in arena.enemy_units:
+		if eu.is_alive:
+			if eu.enemy_type == "SHIELD_HEAVY":
+				sec1_shield_heavy = eu
+			elif eu.enemy_type == "SNIPER":
+				sec1_sniper = eu
+	check(sec1_shield_heavy != null and sec1_shield_heavy.get_node_or_null("VisualRoot/FacingPivot/FrontShieldMesh") != null, "Sector 1 must include SHIELD_HEAVY with FrontShieldMesh")
+	check(sec1_sniper != null and sec1_sniper.behavior == "SNIPER", "Sector 1 must include SNIPER enemy archetype")
+
+	if sec1_shield_heavy != null:
+		sec1_shield_heavy.facing_dir = Vector3(0.0, 0.0, 1.0)
+		var sh_pos: Vector3 = sec1_shield_heavy.global_position if sec1_shield_heavy.is_inside_tree() else sec1_shield_heavy.position
+		var front_hit: Dictionary = sec1_shield_heavy.take_directional_damage(100, null, sh_pos + Vector3(0.0, 0.0, 5.0), 0)
+		check(bool(front_hit.get("shielded", false)) == true and int(front_hit.get("damage", 100)) < 100, "SHIELD_HEAVY must mitigate pen=0 frontal hits")
+		var pen_hit: Dictionary = sec1_shield_heavy.take_directional_damage(100, null, sh_pos + Vector3(0.0, 0.0, 5.0), 2)
+		check(bool(pen_hit.get("shielded", true)) == false and int(pen_hit.get("damage", 0)) == 100, "pen=2 shot (Railgun/SR) must bypass SHIELD_HEAVY front shield")
+		var flank_hit: Dictionary = sec1_shield_heavy.take_directional_damage(100, null, sh_pos + Vector3(0.0, 0.0, -5.0), 0)
+		check(bool(flank_hit.get("shielded", true)) == false and int(flank_hit.get("damage", 0)) == 100, "Rear flank shot must bypass SHIELD_HEAVY front shield")
+		sec1_shield_heavy.current_hp = sec1_shield_heavy.max_hp
+		sec1_shield_heavy.is_alerted = false
+		arena._alert_enemy_squad(sec1_shield_heavy)
+		check(sec1_shield_heavy.is_alerted == true, "_alert_enemy_squad must alert trigger enemy")
+		for eu in arena.enemy_units:
+			if eu.is_alive and eu != sec1_shield_heavy and eu.position.distance_to(sec1_shield_heavy.position) <= 12.0:
+				check(eu.is_alerted == true, "Nearby Sector 1 squadmate within 12m must chain-wake via _alert_enemy_squad")
+
+	if sec1_sniper != null:
+		sec1_sniper.alert()
+		var kite_dec: Dictionary = arena.enemy_ai.evaluate(sec1_sniper, [{"position": sec1_sniper.position + Vector3(0.0, 0.0, 3.0), "is_alive": true}])
+		check(str(kite_dec.get("action", "")) == "KITE_BACK", "Alerted SNIPER must evaluate KITE_BACK when threat closes under 5.5m")
 
 	# 6. Force-load BOSS room -> BossUnit + TelegraphedAoE detonation & cleanup
 	arena.load_single_room_for_test("BOSS", 1)
@@ -465,6 +607,7 @@ func _run_tests() -> void:
 	check(target_striker.current_hp < striker_hp_before, "Detonated TelegraphedAoE must damage held striker inside radius")
 	check(arena.active_aoes.is_empty(), "Detonated TelegraphedAoEs must be freed and removed from active_aoes")
 	check(not is_instance_valid(danger_aoe), "Detonated danger_aoe must be freed from ObjectDB")
+	arena.feel_manager.tick_effects(0.6)
 	arena.step_combat(0.016)
 	arena.step_combat(0.016)
 
