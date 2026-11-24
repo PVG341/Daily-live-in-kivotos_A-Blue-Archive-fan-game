@@ -34,6 +34,7 @@ const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
 const STRIKER_ATTACK_COOLDOWN: float = 1.2
 const ENEMY_ATTACK_COOLDOWN: float = 1.6
+const DOUBLE_TAP_WINDOW_MS: int = 400
 
 var layout_generator: DungeonLayoutGeneratorScript
 var card_manager: RoguelikeCardManagerScript
@@ -90,6 +91,8 @@ var _unit_cooldowns: Dictionary = {}
 var _unit_flank_memory: Dictionary = {}
 var _is_dragging_box: bool = false
 var _drag_start_pos: Vector2 = Vector2.ZERO
+var _last_tool_hotkey: int = 0
+var _last_tool_hotkey_ms: int = -1000
 var _initialized: bool = false
 
 func _init() -> void:
@@ -160,14 +163,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_QUOTELEFT:
 				_select_all_living_strikers()
 			KEY_Z:
-				if commander_system != null:
-					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.ASSAULT_ZONE)
+				_handle_tool_hotkey(KEY_Z, CommanderDirectiveSystemScript.ToolMode.ASSAULT_ZONE, "ASSAULT")
 			KEY_V:
-				if commander_system != null:
-					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE)
+				_handle_tool_hotkey(KEY_V, CommanderDirectiveSystemScript.ToolMode.DEFENSE_ZONE, "DEFENSE")
 			KEY_B:
-				if commander_system != null:
-					commander_system.select_tool(CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE)
+				_handle_tool_hotkey(KEY_B, CommanderDirectiveSystemScript.ToolMode.FREESHOT_ZONE, "FREESHOT")
 			KEY_X:
 				if commander_system != null:
 					commander_system.cancel_tool()
@@ -177,7 +177,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if commander_system != null:
 					commander_system.toggle_tactical_slow_mo()
 			KEY_G:
-				_clear_directives_for_selection()
+				if key.shift_pressed or Input.is_key_pressed(KEY_SHIFT):
+					_clear_all_directives()
+				else:
+					_clear_directives_for_selection()
 			KEY_C, KEY_HOME:
 				_recenter_camera_on_squad()
 			KEY_ESCAPE:
@@ -222,7 +225,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if armed_tool != CommanderDirectiveSystemScript.ToolMode.NONE and commander_system != null:
 				commander_system.cancel_tool()
 			else:
-				_handle_commander_right_click(mb.position)
+				_handle_commander_right_click(mb.position, mb.shift_pressed or Input.is_key_pressed(KEY_SHIFT))
 
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -586,6 +589,7 @@ func _spawn_persistent_strikers() -> void:
 		unit.name = sd.student_name
 		unit.setup(sd)
 		unit.order_completed.connect(_on_striker_order_completed)
+		unit.unit_died.connect(_on_striker_died)
 		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0, sd.attack_range)
 		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp, false)
 		_bind_unit_hp_feedback(unit)
@@ -594,6 +598,8 @@ func _spawn_persistent_strikers() -> void:
 		initial_hp_map[sd.id] = unit.current_hp
 
 	room_manager.set_squad_hp(initial_hp_map)
+	if commander_system != null:
+		commander_system.set_squad_unit_ids(_get_living_striker_ids())
 
 func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	_clear_enemies()
@@ -657,6 +663,8 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 			combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
 			combat_hud.update_striker_order(unit.unit_data.id, "")
 
+	if commander_system != null:
+		commander_system.set_squad_unit_ids(_get_living_striker_ids())
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
 	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	proxy_factory.update_tactical_zone_disc(tactical_zone_disc, Vector3.ZERO, 6.5, 1, false)
@@ -841,6 +849,13 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 	match action:
 		"EVADE_AOE", "SURVIVAL_RETREAT", "ADVANCE_TO_ZONE", "HOLD_DEFENSE_ZONE":
 			_navigate_unit_toward(striker, target_pos, delta)
+		"ADVANCE_ENGAGE":
+			_navigate_unit_toward(striker, target_pos, delta)
+			if target is CombatUnitScript:
+				var adv_enemy := target as CombatUnitScript
+				if striker.position.distance_to(adv_enemy.position) <= eff_range + 1.0 and has_unit_los(striker, adv_enemy):
+					if cd <= 0.0 and not striker.is_holding_fire:
+						_fire_striker_shot(striker, adv_enemy, uid)
 		"FREESHOT_BOMBARD":
 			var bomb_pos: Vector3 = (target as CombatUnitScript).position if (target is CombatUnitScript) else target_pos
 			var dist_bomb: float = Vector2(striker.position.x, striker.position.z).distance_to(Vector2(bomb_pos.x, bomb_pos.z))
@@ -879,7 +894,7 @@ func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemi
 					if striker.position.distance_to(c_enemy.position) <= eff_range and has_unit_los(striker, c_enemy):
 						if cd <= 0.0 and not striker.is_holding_fire:
 							_fire_striker_shot(striker, c_enemy, uid)
-					elif commander_system == null or commander_system.current_stance != CommanderDirectiveSystemScript.SquadStance.DEFENSIVE_HOLD:
+					else:
 						_navigate_unit_toward(striker, c_enemy.position, delta)
 		"FOCUS_PRIORITY_TARGET", "ENGAGE_BEST_ENEMY", "ATTACK_TARGET", "TAUNT_ENGAGE":
 			if target is CombatUnitScript:
@@ -1256,6 +1271,8 @@ func _begin_special_skill_targeting(skill_index: int) -> void:
 		_update_status_banner("Targeting EX Skill: %s | Range: %.0fm (Left-Click ground)" % [sk.name, sk.cast_range])
 
 func _on_ex_target_confirmed(skill: SkillData, world_pos: Vector3) -> void:
+	if commander_system != null:
+		commander_system.set_squad_unit_ids(_get_living_striker_ids())
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
 	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	if skill == null or ex_skill_system == null:
@@ -1263,6 +1280,8 @@ func _on_ex_target_confirmed(skill: SkillData, world_pos: Vector3) -> void:
 	ex_skill_system.activate_skill(skill, world_pos)
 
 func _on_ex_target_cancelled() -> void:
+	if commander_system != null:
+		commander_system.set_squad_unit_ids(_get_living_striker_ids())
 	proxy_factory.update_skill_preview_disc(skill_preview_disc, Vector3.ZERO, 1.0, false)
 	proxy_factory.update_skill_range_ring(skill_range_ring, Vector3.ZERO, 0.0, false)
 	_update_status_banner("EX Skill Cancelled")
@@ -1348,13 +1367,44 @@ func _finalize_commander_zone_drag(end_pos: Vector2) -> void:
 			ztype = "FREESHOT"
 		_:
 			ztype = "ASSAULT"
+	for u in _get_targeted_strikers():
+		if u.has_player_order and u.current_order_type == "MOVE":
+			u.clear_player_order()
 	var target_ids: Array[String] = _get_selected_student_ids()
 	commander_system.create_zone_for_units(ztype, w_start, radius, target_ids)
 	commander_system.cancel_tool()
 	var who_label: String = "TOÀN ĐỘI" if target_ids.is_empty() else ", ".join(target_ids)
 	_update_status_banner("Chỉ thị [%s]: Đặt %s (%.1fm)" % [who_label, ztype, radius])
 
-func _handle_commander_right_click(screen_pos: Vector2) -> void:
+func _handle_tool_hotkey(keycode: int, tool_mode: int, zone_type: String) -> void:
+	var now_ms: int = Time.get_ticks_msec()
+	if _last_tool_hotkey == keycode and (now_ms - _last_tool_hotkey_ms) <= DOUBLE_TAP_WINDOW_MS:
+		_last_tool_hotkey = 0
+		_last_tool_hotkey_ms = -1000
+		_apply_zone_in_place(zone_type, 6.5)
+		return
+	_last_tool_hotkey = keycode
+	_last_tool_hotkey_ms = now_ms
+	if commander_system != null:
+		commander_system.select_tool(tool_mode)
+
+func _apply_zone_in_place(zone_type: String, radius: float = 6.5) -> void:
+	if commander_system == null:
+		return
+	var targets: Array[CombatUnitScript] = _get_targeted_strikers()
+	if targets.is_empty():
+		return
+	for u in targets:
+		if u.has_player_order and u.current_order_type == "MOVE":
+			u.clear_player_order()
+	var center_pos: Vector3 = _get_units_centroid(targets)
+	var target_ids: Array[String] = _get_selected_student_ids()
+	commander_system.create_zone_for_units(zone_type, center_pos, radius, target_ids)
+	commander_system.cancel_tool()
+	var who_label: String = "TOÀN ĐỘI" if target_ids.is_empty() else ", ".join(target_ids)
+	_update_status_banner("Chỉ thị [%s]: Kích hoạt %s tại chỗ (%.1fm)" % [who_label, zone_type, radius])
+
+func _handle_commander_right_click(screen_pos: Vector2, shift_held: bool = false) -> void:
 	if commander_system == null:
 		return
 	var iso_cam := _get_isometric_camera()
@@ -1363,25 +1413,74 @@ func _handle_commander_right_click(screen_pos: Vector2) -> void:
 	var world_pt: Vector3 = _project_to_ground(screen_pos, iso_cam)
 	var click_xz := Vector2(world_pt.x, world_pt.z)
 	var sel_ids: Array[String] = _get_selected_student_ids()
+	var scope: String = "TOÀN ĐỘI" if sel_ids.is_empty() else ", ".join(sel_ids)
 
 	for enemy in _get_living_enemies():
 		var e := enemy as CombatUnitScript
 		if Vector2(e.position.x, e.position.z).distance_to(click_xz) <= 2.2:
+			for u in _get_targeted_strikers():
+				if u.has_player_order and u.current_order_type == "MOVE":
+					u.clear_player_order()
 			commander_system.set_target_for_units(e, sel_ids)
-			var scope: String = "TOÀN ĐỘI" if sel_ids.is_empty() else ", ".join(sel_ids)
 			_update_status_banner("Chỉ thị [%s]: Mục tiêu ưu tiên (%s)" % [scope, e.name])
 			return
 
-	if selection_manager != null and not selection_manager.selected_units.is_empty():
-		selection_manager.issue_move_order(world_pt)
+	var targets: Array[CombatUnitScript] = _get_targeted_strikers()
+	if shift_held:
+		var move_ids: Array[String] = sel_ids if not sel_ids.is_empty() else _get_living_striker_ids()
+		commander_system.clear_directives_for_units(move_ids)
+		if selection_manager != null and not selection_manager.selected_units.is_empty():
+			selection_manager.issue_move_order(world_pt)
+		else:
+			for u in targets:
+				u.receive_move_order(world_pt)
+				proxy_factory.update_unit_order_visual(u, "MOVE")
+				if combat_hud != null and u.unit_data != null:
+					combat_hud.update_striker_order(u.unit_data.id, "MOVE")
 		proxy_factory.update_order_beacon(order_beacon, world_pt, Color(0.2, 0.9, 1.0, 0.45), true)
-		_update_status_banner("Chỉ thị [%s]: Di chuyển đến điểm chỉ định" % ", ".join(sel_ids))
+		_update_status_banner("Chỉ thị [%s]: Di chuyển thẳng (không bắn)" % scope)
 		return
 
-	var origin_centroid: Vector3 = _get_squad_centroid()
-	commander_system.set_advance_vector(origin_centroid, world_pt)
-	proxy_factory.update_order_beacon(order_beacon, world_pt, Color(0.25, 0.92, 1.0, 0.55), true)
-	_update_status_banner("Chỉ thị Chỉ Huy: Tiến quân theo hướng chỉ định")
+	for u in targets:
+		if u.has_player_order and u.current_order_type == "MOVE":
+			u.clear_player_order()
+	var origin_centroid: Vector3 = _get_units_centroid(targets)
+	commander_system.set_advance_target_for_units(origin_centroid, world_pt, sel_ids)
+	proxy_factory.update_order_beacon(order_beacon, world_pt, Color(1.0, 0.85, 0.22, 0.55), true)
+	_update_status_banner("Chỉ thị [%s]: Hướng tiến công (vừa đi vừa đánh)" % scope)
+
+func _get_living_striker_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for s in _get_living_strikers():
+		var cu := s as CombatUnitScript
+		if cu != null:
+			var sid: String = cu.unit_data.id if cu.unit_data != null else str(cu.name)
+			if not sid.is_empty() and not ids.has(sid):
+				ids.append(sid)
+	return ids
+
+func _get_units_centroid(units_list: Array) -> Vector3:
+	if units_list.is_empty():
+		return _get_squad_centroid()
+	var sum := Vector3.ZERO
+	var count: int = 0
+	for u in units_list:
+		if u is Node3D and is_instance_valid(u):
+			var n := u as Node3D
+			sum += n.global_position if n.is_inside_tree() else n.position
+			count += 1
+	return (sum / float(count)) if count > 0 else Vector3.ZERO
+
+func _on_striker_died(unit: CombatUnitScript) -> void:
+	if unit == null or not is_instance_valid(unit):
+		return
+	if selection_manager != null:
+		selection_manager.deselect_unit(unit)
+	if commander_system != null:
+		var sid: String = unit.unit_data.id if unit.unit_data != null else str(unit.name)
+		commander_system.set_squad_unit_ids(_get_living_striker_ids())
+		if not sid.is_empty():
+			commander_system.clear_directives_for_units([sid])
 
 func _get_selected_student_ids() -> Array[String]:
 	var ids: Array[String] = []
@@ -1451,15 +1550,35 @@ func _toggle_hold_fire_for_selection() -> void:
 
 func _clear_directives_for_selection() -> void:
 	var sel_ids: Array[String] = _get_selected_student_ids()
+	if sel_ids.is_empty():
+		_update_status_banner("Chưa chọn nhân vật để hủy lệnh ([G]: Hủy người đang chọn | [Shift+G]: Hủy toàn bộ)")
+		return
 	if commander_system != null:
 		commander_system.clear_directives_for_units(sel_ids)
-	for u in _get_targeted_strikers():
-		u.set_hold_fire(false)
-		u.clear_player_order()
-		proxy_factory.update_unit_order_visual(u, "")
-		if combat_hud != null and u.unit_data != null:
-			combat_hud.update_striker_order(u.unit_data.id, "")
-	_update_status_banner("Đã hủy chỉ thị: %s" % (", ".join(sel_ids) if not sel_ids.is_empty() else "TOÀN ĐỘI"))
+	if selection_manager != null:
+		for u in selection_manager.selected_units:
+			if u is CombatUnitScript:
+				var cu := u as CombatUnitScript
+				cu.set_hold_fire(false)
+				cu.clear_player_order()
+				proxy_factory.update_unit_order_visual(cu, "")
+				if combat_hud != null and cu.unit_data != null:
+					combat_hud.update_striker_order(cu.unit_data.id, "")
+	_update_status_banner("Đã hủy chỉ thị: %s" % ", ".join(sel_ids))
+
+func _clear_all_directives() -> void:
+	if commander_system != null:
+		commander_system.clear_directives()
+	for u in squad_units:
+		if u != null and is_instance_valid(u):
+			u.set_hold_fire(false)
+			u.clear_player_order()
+			proxy_factory.update_unit_order_visual(u, "")
+			if combat_hud != null and u.unit_data != null:
+				combat_hud.update_striker_order(u.unit_data.id, "")
+	if order_beacon != null:
+		proxy_factory.update_order_beacon(order_beacon, Vector3.ZERO, Color.WHITE, false)
+	_update_status_banner("Đã hủy toàn bộ chỉ thị (TOÀN ĐỘI)")
 
 func _on_commander_tool_clicked(tool_id: String) -> void:
 	if commander_system == null:
@@ -1474,7 +1593,12 @@ func _on_commander_tool_clicked(tool_id: String) -> void:
 		"HOLD_FIRE":
 			_toggle_hold_fire_for_selection()
 		"CLEAR":
-			_clear_directives_for_selection()
+			if Input.is_key_pressed(KEY_SHIFT):
+				_clear_all_directives()
+			else:
+				_clear_directives_for_selection()
+		"CLEAR_ALL":
+			_clear_all_directives()
 
 func _on_commander_tool_changed(new_tool: int, _tool_name: String) -> void:
 	if combat_hud == null:

@@ -40,11 +40,12 @@ func _ensure_commander_toolbar() -> void:
 	add_child(bar)
 
 	var defs: Array[Dictionary] = [
-		{"id": "ASSAULT", "label": "⚔️ Giao Tranh [Z]"},
-		{"id": "DEFENSE", "label": "🛡️ Phòng Thủ [V]"},
-		{"id": "FREESHOT", "label": "💣 Freeshot [B]"},
+		{"id": "ASSAULT", "label": "⚔️ Giao Tranh [Z / ZZ]"},
+		{"id": "DEFENSE", "label": "🛡️ Phòng Thủ [V / VV]"},
+		{"id": "FREESHOT", "label": "💣 Freeshot [B / BB]"},
 		{"id": "HOLD_FIRE", "label": "🚫 Giữ Hỏa Lực [H]"},
-		{"id": "CLEAR", "label": "✖ Hủy Lệnh [G]"},
+		{"id": "CLEAR", "label": "✖ Hủy Chọn [G]"},
+		{"id": "CLEAR_ALL", "label": "✖ Hủy Hết [Shift+G]"},
 	]
 	for item: Dictionary in defs:
 		var tid: String = str(item["id"])

@@ -292,6 +292,8 @@ func update_unit_order_visual(unit: Node3D, order_type: String) -> void:
 			show_beam = false
 		"💣 BẮN PHÁ VÙNG":
 			beam_color = Color(1.0, 0.28, 0.72, 0.42)
+		"⚔️ TIẾN CÔNG", "➔ TIẾN QUÂN":
+			beam_color = Color(1.0, 0.85, 0.22, 0.36)
 		"🛡️ VÀO VÙNG PHÒNG THỦ", "🛡️ PHÒNG THỦ & BẮN", "🛡️ GIỮ VỊ TRÍ":
 			beam_color = Color(0.22, 0.92, 0.52, 0.36)
 		_:
@@ -445,7 +447,8 @@ func update_tactical_zone_visual(disc: Node3D, zone_data: Dictionary, visible_st
 				(cm2.material as StandardMaterial3D).albedo_color = Color(base_col.r, base_col.g, base_col.b, 0.55)
 	var lbl := disc.get_node_or_null("ZoneTitleLabel") as Label3D
 	if lbl != null:
-		var who_str: String = "TOÀN ĐỘI" if (assigned.is_empty() or assigned.has("*")) else ", ".join(assigned)
+		var is_full_squad: bool = bool(zone_data.get("is_full_squad", false)) or assigned.is_empty() or assigned.has("*") or assigned.size() >= 4
+		var who_str: String = "TOÀN ĐỘI" if is_full_squad else ", ".join(assigned)
 		lbl.text = "%s (%.0fm)\n[%s]" % [title_txt, r, who_str]
 		lbl.modulate = Color(base_col.r, base_col.g, base_col.b, 1.0)
 
