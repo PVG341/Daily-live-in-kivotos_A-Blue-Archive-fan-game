@@ -109,7 +109,10 @@ func update_cost(current: float, max_cost: float = 10.0) -> void:
 		cost_bar.value = clampf(current, 0.0, cost_bar.max_value)
 
 func update_striker_hp(student_id: String, current_hp: int, max_hp: int) -> void:
-	striker_hp[student_id] = Vector2i(current_hp, max_hp)
+	var next_val := Vector2i(current_hp, max_hp)
+	if striker_hp.has(student_id) and striker_hp[student_id] == next_val:
+		return
+	striker_hp[student_id] = next_val
 	_refresh_striker_portraits()
 
 func update_wave(wave_index: int) -> void:
@@ -140,8 +143,12 @@ func update_commander_status(summary_text: String) -> void:
 
 func update_striker_order(student_id: String, order_type: String) -> void:
 	if order_type.is_empty():
+		if not striker_orders.has(student_id):
+			return
 		striker_orders.erase(student_id)
 	else:
+		if str(striker_orders.get(student_id, "")) == order_type:
+			return
 		striker_orders[student_id] = order_type
 	_refresh_striker_portraits()
 

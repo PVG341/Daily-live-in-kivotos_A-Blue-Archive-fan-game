@@ -465,6 +465,8 @@ func _run_tests() -> void:
 	check(target_striker.current_hp < striker_hp_before, "Detonated TelegraphedAoE must damage held striker inside radius")
 	check(arena.active_aoes.is_empty(), "Detonated TelegraphedAoEs must be freed and removed from active_aoes")
 	check(not is_instance_valid(danger_aoe), "Detonated danger_aoe must be freed from ObjectDB")
+	arena.step_combat(0.016)
+	arena.step_combat(0.016)
 
 	# 7. Cleanup & Orphan Node Check
 	root.remove_child(arena)
