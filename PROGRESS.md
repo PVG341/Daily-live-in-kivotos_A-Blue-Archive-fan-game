@@ -238,6 +238,17 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
   * Bố cục lại HUD phong cách Blue Archive gọn gàng, không chồng lấp ở `1152×648` và `1280×720`: thẻ chân dung `PanelContainer` gắn huy hiệu vũ khí (`[SG]`/`[SR]`/`[ARTILLERY]`/`[HG]`), thanh máu, thẻ EX hiển thị Cost/Cooldown/Caster, thanh Cost phân đoạn cyan kèm `CostValueLabel`, `SectorProgressLabel` và `SlowMoBadge`, tối ưu bằng `_ui_styles` và dirty-check.
 * **Kiểm thử Xác minh:** Bổ sung `# 5b.` và `# 5c.` trong `tests/test_combat_arena_flow.gd`; toàn bộ **25/25 suite headless pass** (`OBJECT_ORPHAN_NODE_COUNT == 0`) và smoke-test trực tiếp `scenes/combat/combat_arena.tscn --quit-after 60` đạt `0` lỗi runtime.
 
+### 13b. Vá Điều hướng A* (`BattlefieldNavGrid`) & Hotfix An toàn Instance Đã Giải phóng (`CombatFeelManager`)
+* **Tìm đường A* trên lưới XZ (`BattlefieldNavGrid.gd`, `CombatRoomData.gd`, `EncounterZoneManager.gd`, `CombatArenaController.gd`):**
+  * Tạo mới `BattlefieldNavGrid.gd` (`AStarGrid2D`, `cell_size = 1.0m`) bake ô rắn từ toàn bộ `DestructibleWall3D` chưa vỡ và tường tĩnh (`Wall*`, `CorridorWall*`, `RestFountain`) với bộ đếm `_cell_block_counts` chống mất ô góc khi phá 1 đoạn tường.
+  * `CombatRoomData.gd` phát signal `wall_obstacle_added`; `EncounterZoneManager.gd` dựng `nav_grid` sau khi nối battlefield seamless, cập nhật `notify_wall_destroyed()` khi mở `SectorGate`, và dọn dẹp khi `clear_battlefield()`.
+  * Nâng cấp `_navigate_unit_toward()` dùng A* + làm mượt `_smooth_nav_path()`, cache waypoint kèm watchdog chống kẹt (`NAV_STUCK_CHECK_INTERVAL = 0.45s`), mở rộng góc rẽ tới `±160°` để thoát bunker chữ U/nhà đô thị và hủy cache ngay khi cổng mở hoặc tường bị phá. Kiểm thử hồi quy `# 4g.` trong `tests/test_combat_arena_flow.gd`.
+* **Hotfix An toàn Instance Đã Giải phóng (`CombatFeelManager.gd`, `CombatArenaController.gd`):**
+  * Đảo thứ tự sang `typeof(x) == TYPE_OBJECT and is_instance_valid(x) and x is ...` tại toàn bộ 6 điểm trong `CombatFeelManager.gd` (`_attach_vfx_node`, `trigger_unit_hit_flash`, `tick_effects`, `clear_effects`) và 5 điểm trong `CombatArenaController.gd`.
+  * Gọi `feel_manager.clear_effects()` trước `_clear_enemies()` trong `_on_room_loaded()`.
+  * Bổ sung kiểm thử hồi quy `# 5d.` trong `tests/test_combat_arena_flow.gd` (xác nhận an toàn khi node có hit-flash bị `free()` ngay lập tức); chạy lại toàn bộ **25/25 suite headless pass** (không phát sinh `SCRIPT ERROR`, `OBJECT_ORPHAN_NODE_COUNT == 0`) và smoke-test `scenes/combat/combat_arena.tscn --quit-after 60` sạch `0` lỗi.
+
+
 
 
 

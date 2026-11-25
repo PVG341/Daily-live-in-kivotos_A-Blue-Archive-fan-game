@@ -485,10 +485,68 @@ func _run_tests() -> void:
 	check(is_equal_approx(arena.feel_manager.get_hit_stop_scale(), 1.0), "tick_effects must restore hit-stop scale to 1.0 after duration")
 	check(arena.feel_manager._active_vfx.is_empty(), "tick_effects must clean up and free expired VFX nodes")
 
+	# 4g. Concave Bunker & Urban House AStarGrid2D Escape Navigation
+	for su in arena.squad_units:
+		su.current_hp = su.max_hp
+		su.clear_player_order()
+		su.set_hold_fire(true)
+	arena._clear_all_directives()
+	arena._invalidate_nav_paths()
+	check(arena.encounter_zone_manager != null and arena.encounter_zone_manager.nav_grid != null, "EncounterZoneManager must build BattlefieldNavGrid for seamless arena")
+
+	# CentralBunker U-trap escape (NW & NE inner corners -> must back South out of bunker and wrap North)
+	striker0.position = Vector3(-2.4, 0.0, -2.2)
+	striker1.position = Vector3(2.4, 0.0, -2.2)
+	striker0.receive_move_order(Vector3(0.0, 0.0, -18.0))
+	striker1.receive_move_order(Vector3(0.0, 0.0, -18.0))
+	striker2.receive_hold_position()
+	arena.squad_units[3].receive_hold_position()
+	var bunker_wall_clip: bool = false
+	for _bk_tick in range(65):
+		arena.step_combat(0.1)
+		if arena._find_wall_blocking_point(striker0.position, 0.20) != null or arena._find_wall_blocking_point(striker1.position, 0.20) != null:
+			bunker_wall_clip = true
+		if striker0.position.z < -10.0 and striker1.position.z < -10.0:
+			break
+	check(not bunker_wall_clip, "Strikers escaping CentralBunker U-trap must never clip through unbroken walls")
+	check(striker0.position.z < -10.0, "striker0 trapped in NW CentralBunker corner must exit South and reach North (z < -10), got %.2f" % striker0.position.z)
+	check(striker1.position.z < -10.0, "striker1 trapped in NE CentralBunker corner must exit South and reach North (z < -10), got %.2f" % striker1.position.z)
+
+	# UrbanHouseWest & UrbanHouseEast U-trap escape
+	striker3 = arena.squad_units[3]
+	striker0.receive_hold_position()
+	striker1.receive_hold_position()
+	striker2.clear_player_order()
+	striker3.clear_player_order()
+	striker2.position = Vector3(-22.0, 0.0, -6.5)
+	striker3.position = Vector3(24.0, 0.0, 8.0)
+	striker2.receive_move_order(Vector3(-22.0, 0.0, -14.0))
+	striker3.receive_move_order(Vector3(22.0, 0.0, -2.0))
+	var house_wall_clip: bool = false
+	for _hs_tick in range(80):
+		arena.step_combat(0.1)
+		if arena._find_wall_blocking_point(striker2.position, 0.20) != null or arena._find_wall_blocking_point(striker3.position, 0.20) != null:
+			house_wall_clip = true
+		if striker2.position.z < -11.0 and striker3.position.z < 1.0:
+			break
+	check(not house_wall_clip, "Strikers escaping UrbanHouseWest/East must never clip through unbroken walls")
+	check(striker2.position.z < -11.0, "striker2 inside UrbanHouseWest must exit South and wrap North (z < -11), got %.2f" % striker2.position.z)
+	check(striker3.position.z < 1.0, "striker3 inside UrbanHouseEast must exit West and wrap North (z < 1), got %.2f" % striker3.position.z)
+
+	for su in arena.squad_units:
+		su.current_hp = su.max_hp
+		su.set_hold_fire(false)
+		su.clear_player_order()
+	arena._clear_all_directives()
+	arena._invalidate_nav_paths()
+
 	# 5. Phase D & Progression — Defeating all enemies unlocks SectorGate_0 -> opens RoguelikeCardDraft -> select_draft_card advances seamlessly without teleporting squad
 	check(arena.encounter_zone_manager != null and arena.encounter_zone_manager.active_sectors.size() == 4, "Seamless battlefield must stitch all 4 encounter zone sectors simultaneously")
 	check(arena.encounter_zone_manager.sector_connectors.size() == 3, "Seamless battlefield must build 3 connecting thoroughfares between the 4 sectors")
 	check(arena.encounter_zone_manager.is_sector_gate_unlocked(0) == false, "SectorGate_0 exiting Sector 0 must start locked while enemies are alive")
+	var gate0_ref = arena.encounter_zone_manager.sector_gates[0]
+	var gate0_cell: Vector2i = arena.encounter_zone_manager.nav_grid.world_to_cell(gate0_ref.get_world_center())
+	check(arena.encounter_zone_manager.nav_grid.grid.is_point_solid(gate0_cell) == true, "Locked SectorGate_0 cell must be marked solid in BattlefieldNavGrid")
 	check(arena.camera_rig.bounds_min.y < -150.0, "Camera bounds must expand along -Z to cover the entire multi-sector battlefield")
 
 	var custom_s0_pos := Vector3(-3.0, 0.0, -18.0)
@@ -499,6 +557,7 @@ func _run_tests() -> void:
 			enemy.take_damage(99999)
 
 	check(arena.encounter_zone_manager.is_sector_gate_unlocked(0) == true, "Clearing Sector 0 wave must automatically unlock and open SectorGate_0")
+	check(arena.encounter_zone_manager.nav_grid.grid.is_point_solid(gate0_cell) == false, "Unlocked SectorGate_0 cell must be unmarked in BattlefieldNavGrid")
 	check(arena.room_manager.is_draft_open == true, "Defeating all enemies in room 0 must open draft")
 	check(arena.card_draft_panel.visible == true, "RoguelikeCardDraft panel must be visible when draft opens")
 	check(arena.current_draft_cards.size() == 3, "Draft must roll 3 cards")
@@ -567,6 +626,25 @@ func _run_tests() -> void:
 		sec1_sniper.alert()
 		var kite_dec: Dictionary = arena.enemy_ai.evaluate(sec1_sniper, [{"position": sec1_sniper.position + Vector3(0.0, 0.0, 3.0), "is_alive": true}])
 		check(str(kite_dec.get("action", "")) == "KITE_BACK", "Alerted SNIPER must evaluate KITE_BACK when threat closes under 5.5m")
+
+	# 5d. Regression — Freed unit mid-hit-flash must not error in tick_effects() or clear_effects() / room transition
+	var tmp_unit := Node3D.new()
+	var tmp_vis := Node3D.new()
+	tmp_vis.name = "VisualRoot"
+	tmp_unit.add_child(tmp_vis)
+	arena.feel_manager.trigger_unit_hit_flash(tmp_unit)
+	check(arena.feel_manager._active_flashes.size() >= 1, "trigger_unit_hit_flash must track active VisualRoot flash")
+	tmp_unit.free()
+	arena.feel_manager.tick_effects(0.05)
+	check(arena.feel_manager._active_flashes.is_empty(), "tick_effects must prune freed VisualRoot flash entries safely")
+	var tmp_unit2 := Node3D.new()
+	var tmp_vis2 := Node3D.new()
+	tmp_vis2.name = "VisualRoot"
+	tmp_unit2.add_child(tmp_vis2)
+	arena.feel_manager.trigger_unit_hit_flash(tmp_unit2)
+	tmp_unit2.free()
+	if sec1_shield_heavy != null and is_instance_valid(sec1_shield_heavy):
+		arena.feel_manager.trigger_unit_hit_flash(sec1_shield_heavy)
 
 	# 6. Force-load BOSS room -> BossUnit + TelegraphedAoE detonation & cleanup
 	arena.load_single_room_for_test("BOSS", 1)

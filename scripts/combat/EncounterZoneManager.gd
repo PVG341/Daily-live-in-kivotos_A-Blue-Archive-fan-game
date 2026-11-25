@@ -5,6 +5,7 @@ extends Node
 const CombatRoomDataScript := preload("res://scripts/combat/CombatRoomData.gd")
 const DestructibleWall3DScript := preload("res://scripts/combat/DestructibleWall3D.gd")
 const CoverPoint3DScript := preload("res://scripts/combat/CoverPoint3D.gd")
+const BattlefieldNavGridScript := preload("res://scripts/combat/BattlefieldNavGrid.gd")
 
 signal sector_gate_unlocked(sector_index: int, gate_world_pos: Vector3)
 signal battlefield_built(sector_count: int, bounds_min: Vector2, bounds_max: Vector2)
@@ -16,6 +17,7 @@ var active_sectors: Array = []
 var sector_connectors: Array[Node3D] = []
 var sector_gates: Dictionary = {}
 var sector_metadata: Array[Dictionary] = []
+var nav_grid: BattlefieldNavGridScript = null
 
 var bounds_min: Vector2 = Vector2(-65.0, -65.0)
 var bounds_max: Vector2 = Vector2(65.0, 65.0)
@@ -161,6 +163,8 @@ func build_seamless_battlefield(room_container: Node3D, layout: Array[Dictionary
 	for s in active_sectors:
 		if s != null and is_instance_valid(s):
 			s.linked_sectors = active_sectors.duplicate()
+			if s.has_signal(&"wall_obstacle_added") and not s.wall_obstacle_added.is_connected(_on_sector_wall_added):
+				s.wall_obstacle_added.connect(_on_sector_wall_added)
 
 	for i in range(active_sectors.size() - 1):
 		var cur_meta: Dictionary = sector_metadata[i]
@@ -186,8 +190,28 @@ func build_seamless_battlefield(room_container: Node3D, layout: Array[Dictionary
 
 	bounds_min = Vector2(min_x - 24.0, min_z - 28.0)
 	bounds_max = Vector2(max_x + 24.0, max_z + 28.0)
+	rebuild_nav_grid()
 	battlefield_built.emit(active_sectors.size(), bounds_min, bounds_max)
 	return active_sectors
+
+## Rebuilds the shared BattlefieldNavGrid across all active sectors and connectors.
+func rebuild_nav_grid() -> void:
+	if nav_grid == null:
+		nav_grid = BattlefieldNavGridScript.new()
+	nav_grid.build_from_battlefield(bounds_min, bounds_max, active_sectors, sector_connectors)
+
+## Unmarks a destroyed DestructibleWall3D from the navigation grid.
+func notify_wall_destroyed(wall: Object) -> void:
+	if nav_grid != null:
+		nav_grid.unmark_wall(wall)
+
+## Marks a newly added DestructibleWall3D onto the navigation grid.
+func notify_wall_added(wall: Object) -> void:
+	if nav_grid != null:
+		nav_grid.mark_wall(wall)
+
+func _on_sector_wall_added(wall: Node3D) -> void:
+	notify_wall_added(wall)
 
 ## Shows only the active sector and immediate adjacent sectors/connectors to reduce GPU draw calls.
 func update_sector_visibility(active_index: int) -> void:
@@ -284,6 +308,7 @@ func unlock_sector_gate(sector_index: int) -> bool:
 
 	gate.is_destructible = true
 	gate.destroy_wall()
+	notify_wall_destroyed(gate)
 	if gate.rubble_root != null:
 		gate.rubble_root.visible = false
 
@@ -400,11 +425,16 @@ func clear_battlefield() -> void:
 
 	for s in active_sectors:
 		if s != null and is_instance_valid(s):
+			if s.has_signal(&"wall_obstacle_added") and s.wall_obstacle_added.is_connected(_on_sector_wall_added):
+				s.wall_obstacle_added.disconnect(_on_sector_wall_added)
 			var n := s as Node
 			if n.get_parent() != null:
 				n.get_parent().remove_child(n)
 			n.free()
 	active_sectors.clear()
+	if nav_grid != null:
+		nav_grid.clear()
+		nav_grid = null
 
 func _exit_tree() -> void:
 	clear_battlefield()
