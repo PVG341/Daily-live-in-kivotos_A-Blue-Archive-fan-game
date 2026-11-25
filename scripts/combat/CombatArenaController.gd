@@ -39,6 +39,8 @@ const ENEMY_ATTACK_COOLDOWN: float = 1.6
 const DOUBLE_TAP_WINDOW_MS: int = 400
 const TACTICAL_MARCH_SPEED_MULT: float = 1.65
 const AI_EVAL_INTERVAL: float = 0.15
+const NAV_REPATH_INTERVAL: float = 0.35
+const NAV_STUCK_CHECK_INTERVAL: float = 0.45
 
 var layout_generator: DungeonLayoutGeneratorScript
 var card_manager: RoguelikeCardManagerScript
@@ -96,6 +98,7 @@ var _boss_aoe_timer: float = 2.5
 var _event_check_timer: float = 0.0
 var _unit_cooldowns: Dictionary = {}
 var _unit_flank_memory: Dictionary = {}
+var _unit_nav_paths: Dictionary = {}
 var _unit_ai_cache: Dictionary = {}
 var _unit_last_status_tag: Dictionary = {}
 var _unit_last_hp_state: Dictionary = {}
@@ -148,6 +151,7 @@ func _exit_tree() -> void:
 	_clear_active_aoes()
 	_clear_active_zone_discs()
 	_unit_flank_memory.clear()
+	_unit_nav_paths.clear()
 	_unit_ai_cache.clear()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
@@ -282,6 +286,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func start_run(difficulty: int = 1) -> void:
 	run_finished = false
 	_unit_cooldowns.clear()
+	_unit_nav_paths.clear()
 	_unit_ai_cache.clear()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
@@ -306,6 +311,7 @@ func start_run(difficulty: int = 1) -> void:
 ## Forces loading a specific room type (used by tests or debug tools).
 func load_single_room_for_test(room_type: String, difficulty: int = 1) -> void:
 	run_finished = false
+	_unit_nav_paths.clear()
 	_unit_ai_cache.clear()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
@@ -442,6 +448,9 @@ func spawn_boss_telegraphed_aoe(boss: BossUnitScript, target_pos: Vector3) -> Te
 
 func _invalidate_ai_cache() -> void:
 	_unit_ai_cache.clear()
+
+func _invalidate_nav_paths() -> void:
+	_unit_nav_paths.clear()
 
 ## Selects a rolled card during draft, applies its buff, and advances to the next room.
 func select_draft_card(card_index: int) -> bool:
@@ -690,6 +699,8 @@ func _spawn_persistent_strikers() -> void:
 		commander_system.set_squad_unit_ids(_get_living_striker_ids())
 
 func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
+	if feel_manager != null:
+		feel_manager.clear_effects()
 	_clear_enemies()
 	_clear_active_aoes()
 	_clear_active_zone_discs()
@@ -701,11 +712,10 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 	if commander_system != null:
 		commander_system.clear_directives()
 	_unit_flank_memory.clear()
+	_invalidate_nav_paths()
 	_invalidate_ai_cache()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
-	if feel_manager != null:
-		feel_manager.clear_effects()
 	if health_bar_overlay != null:
 		health_bar_overlay.clear_all()
 
@@ -949,8 +959,10 @@ func _complete_rest_sector_supply(room_index: int) -> void:
 			if combat_hud != null and unit.unit_data != null:
 				combat_hud.update_striker_hp(unit.unit_data.id, unit.current_hp, unit.max_hp)
 	if seamless_mode and encounter_zone_manager != null:
-		if encounter_zone_manager.unlock_sector_gate(room_index) and projectile_manager != null:
-			projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
+		if encounter_zone_manager.unlock_sector_gate(room_index):
+			_invalidate_nav_paths()
+			if projectile_manager != null:
+				projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
 	room_manager.mark_current_room_cleared()
 	_open_card_draft()
 
@@ -975,6 +987,7 @@ func _on_wave_cleared(_wave_index: int) -> void:
 	var cur_idx: int = room_manager.get_current_room_index()
 	if seamless_mode and encounter_zone_manager != null:
 		if encounter_zone_manager.unlock_sector_gate(cur_idx):
+			_invalidate_nav_paths()
 			if projectile_manager != null:
 				projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
 			if health_bar_overlay != null:
@@ -1290,7 +1303,7 @@ func _alert_enemy_squad(trigger_enemy: EnemyUnitScript) -> void:
 	var newly_alerted: bool = not trigger_enemy.is_alerted
 	trigger_enemy.alert()
 	for e in enemy_units:
-		if not (e is EnemyUnitScript) or not is_instance_valid(e):
+		if typeof(e) != TYPE_OBJECT or not is_instance_valid(e) or not (e is EnemyUnitScript):
 			continue
 		var other := e as EnemyUnitScript
 		if not other.is_alive or other == trigger_enemy:
@@ -1418,6 +1431,53 @@ func _push_out_of_overlapping_walls(unit: CombatUnitScript) -> void:
 		if push.is_zero_approx():
 			break
 		unit.position += push
+	var ng: Variant = _get_nav_grid()
+	if ng != null:
+		var static_push: Vector3 = ng.get_static_push_out_offset(unit.position, 0.40)
+		if not static_push.is_zero_approx():
+			unit.position += static_push
+
+func _get_nav_grid() -> Variant:
+	if encounter_zone_manager == null or not is_instance_valid(encounter_zone_manager):
+		return null
+	var ng: Variant = encounter_zone_manager.nav_grid
+	if ng != null and bool(ng.get(&"_is_built")):
+		return ng
+	return null
+
+func _is_point_blocked_by_any_wall(world_pos: Vector3, padding: float = 0.36) -> bool:
+	if _find_wall_blocking_point(world_pos, padding) != null:
+		return true
+	var ng: Variant = _get_nav_grid()
+	if ng != null and ng.is_point_blocked_by_static(world_pos, padding):
+		return true
+	return false
+
+func _is_segment_blocked_by_any_wall(from_pos: Vector3, to_pos: Vector3) -> bool:
+	if _find_movement_blocker_along_segment(from_pos, to_pos) != null:
+		return true
+	var ng: Variant = _get_nav_grid()
+	if ng != null and ng.is_segment_blocked_by_static(from_pos, to_pos, 0.32):
+		return true
+	return false
+
+func _smooth_nav_path(start_pos: Vector3, raw_points: Array[Vector3]) -> Array[Vector3]:
+	if raw_points.size() <= 1:
+		return raw_points
+	var smoothed: Array[Vector3] = []
+	var anchor: Vector3 = start_pos
+	var i: int = 0
+	while i < raw_points.size():
+		var furthest: int = i
+		for j in range(raw_points.size() - 1, i, -1):
+			if not _is_segment_blocked_by_any_wall(anchor, raw_points[j]):
+				furthest = j
+				break
+		var chosen: Vector3 = raw_points[furthest]
+		smoothed.append(chosen)
+		anchor = chosen
+		i = furthest + 1
+	return smoothed
 
 func _pick_unblocked_corner(unit: CombatUnitScript, blocker: Object, target_pos: Vector3) -> Vector3:
 	var corners: Array[Vector3] = blocker.get_flank_corners(1.25)
@@ -1467,17 +1527,95 @@ func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: f
 		return
 	_push_out_of_overlapping_walls(unit)
 
+	var uid: int = unit.get_instance_id()
 	var flat_target := Vector3(target_pos.x, unit.position.y, target_pos.z)
 	if Vector2(unit.position.x, unit.position.z).distance_to(Vector2(flat_target.x, flat_target.z)) <= 0.15:
+		_unit_nav_paths.erase(uid)
 		return
 
-	var uid: int = unit.get_instance_id()
 	var steer_target: Vector3 = flat_target
-	var blocker = _find_movement_blocker_along_segment(unit.position, flat_target)
-	if blocker != null and is_instance_valid(blocker):
-		steer_target = _pick_unblocked_corner(unit, blocker, flat_target)
-	else:
+	if not _is_segment_blocked_by_any_wall(unit.position, flat_target):
+		_unit_nav_paths.erase(uid)
 		_unit_flank_memory.erase(uid)
+	else:
+		var ng: Variant = _get_nav_grid()
+		var resolved_via_grid: bool = false
+		if ng != null:
+			var nav_entry: Variant = _unit_nav_paths.get(uid, null)
+			var waypoints: Array = []
+			var wp_index: int = 0
+			var repath_timer: float = 0.0
+			var stuck_timer: float = 0.0
+			var last_check_pos: Vector3 = unit.position
+			var prev_goal := Vector3(INF, 0.0, INF)
+			var needs_repath: bool = true
+
+			if nav_entry is Dictionary:
+				var ne := nav_entry as Dictionary
+				var stored_wps: Variant = ne.get("waypoints", [])
+				if stored_wps is Array:
+					waypoints = stored_wps as Array
+				wp_index = int(ne.get("wp_index", 0))
+				repath_timer = float(ne.get("repath_timer", 0.0)) - delta
+				stuck_timer = float(ne.get("stuck_timer", 0.0)) + delta
+				last_check_pos = ne.get("last_check_pos", unit.position)
+				prev_goal = ne.get("goal", prev_goal)
+				needs_repath = false
+
+				if stuck_timer >= NAV_STUCK_CHECK_INTERVAL:
+					var moved_xz: float = Vector2(unit.position.x - last_check_pos.x, unit.position.z - last_check_pos.z).length()
+					if moved_xz < 0.20:
+						needs_repath = true
+					stuck_timer = 0.0
+					last_check_pos = unit.position
+
+				while wp_index < waypoints.size():
+					var wp: Vector3 = waypoints[wp_index]
+					var wp_dist: float = Vector2(unit.position.x - wp.x, unit.position.z - wp.z).length()
+					if wp_index + 1 < waypoints.size():
+						var next_wp: Vector3 = waypoints[wp_index + 1]
+						if wp_dist <= 0.45 or (wp_dist <= 0.85 and not _is_segment_blocked_by_any_wall(unit.position, next_wp)):
+							wp_index += 1
+							continue
+						if not _is_segment_blocked_by_any_wall(unit.position, next_wp):
+							wp_index += 1
+							continue
+					elif wp_dist <= 0.20:
+						wp_index += 1
+						continue
+					break
+
+				var goal_shift: float = Vector2(prev_goal.x - flat_target.x, prev_goal.z - flat_target.z).length()
+				if waypoints.is_empty() or wp_index >= waypoints.size() or goal_shift > 1.5 or repath_timer <= 0.0:
+					needs_repath = true
+
+			if needs_repath:
+				var raw_path: Array[Vector3] = ng.find_path_xz(unit.position, flat_target)
+				waypoints = _smooth_nav_path(unit.position, raw_path)
+				wp_index = 0
+				repath_timer = NAV_REPATH_INTERVAL
+				stuck_timer = 0.0
+				last_check_pos = unit.position
+
+			_unit_nav_paths[uid] = {
+				"waypoints": waypoints,
+				"wp_index": wp_index,
+				"repath_timer": repath_timer,
+				"stuck_timer": stuck_timer,
+				"last_check_pos": last_check_pos,
+				"goal": flat_target,
+			}
+			if not waypoints.is_empty() and wp_index < waypoints.size():
+				steer_target = waypoints[wp_index]
+				_unit_flank_memory.erase(uid)
+				resolved_via_grid = true
+
+		if not resolved_via_grid:
+			var blocker = _find_movement_blocker_along_segment(unit.position, flat_target)
+			if blocker != null and is_instance_valid(blocker):
+				steer_target = _pick_unblocked_corner(unit, blocker, flat_target)
+			else:
+				_unit_flank_memory.erase(uid)
 
 	var to_steer: Vector3 = Vector3(steer_target.x, unit.position.y, steer_target.z) - unit.position
 	var dist: float = to_steer.length()
@@ -1496,12 +1634,22 @@ func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: f
 	var mem: Variant = _unit_flank_memory.get(uid, null)
 	var side_sign: float = float((mem as Dictionary).get("side", 1.0)) if (mem is Dictionary) else (1.0 if (abs(uid) % 2 == 0) else -1.0)
 
-	var test_angles: Array[float] = [0.0, 0.61 * side_sign, -0.61 * side_sign, 1.13 * side_sign, -1.13 * side_sign, 1.65 * side_sign, -1.65 * side_sign]
+	var test_angles: Array[float] = [
+		0.0,
+		0.61 * side_sign, -0.61 * side_sign,
+		1.13 * side_sign, -1.13 * side_sign,
+		1.65 * side_sign, -1.65 * side_sign,
+		2.27 * side_sign, -2.27 * side_sign,
+		2.79 * side_sign, -2.79 * side_sign,
+	]
 	var moved: bool = false
 	for ang in test_angles:
 		var rot_dir: Vector3 = dir.rotated(Vector3.UP, ang)
 		var cand: Vector3 = unit.position + rot_dir * step
-		if _find_wall_blocking_point(cand, 0.36) == null and not _is_step_blocked_by_peer(unit, cand, 1.05):
+		var step_clear: bool = not _is_point_blocked_by_any_wall(cand, 0.36)
+		if step_clear and step > 0.45:
+			step_clear = not _is_segment_blocked_by_any_wall(unit.position, cand)
+		if step_clear and not _is_step_blocked_by_peer(unit, cand, 1.05):
 			unit.position = cand
 			moved = true
 			break
@@ -1509,7 +1657,10 @@ func _navigate_unit_toward(unit: CombatUnitScript, target_pos: Vector3, delta: f
 		for ang in test_angles:
 			var rot_dir: Vector3 = dir.rotated(Vector3.UP, ang)
 			var cand: Vector3 = unit.position + rot_dir * step
-			if _find_wall_blocking_point(cand, 0.36) == null:
+			var step_clear: bool = not _is_point_blocked_by_any_wall(cand, 0.36)
+			if step_clear and step > 0.45:
+				step_clear = not _is_segment_blocked_by_any_wall(unit.position, cand)
+			if step_clear:
 				unit.position = cand
 				break
 
@@ -1561,12 +1712,12 @@ func _apply_unit_separation(unit: CombatUnitScript, delta: float) -> void:
 	var push_dir: Vector3 = push.normalized()
 	var push_step: float = minf(0.55, 4.2 * delta)
 	var cand: Vector3 = unit.position + push_dir * push_step
-	if _find_wall_blocking_point(cand, 0.36) == null:
+	if not _is_point_blocked_by_any_wall(cand, 0.36):
 		unit.position = cand
 	else:
 		var side_sign: float = 1.0 if (abs(uid) % 2 == 0) else -1.0
 		var tan_cand: Vector3 = unit.position + push_dir.rotated(Vector3.UP, PI * 0.5 * side_sign) * (push_step * 0.8)
-		if _find_wall_blocking_point(tan_cand, 0.36) == null:
+		if not _is_point_blocked_by_any_wall(tan_cand, 0.36):
 			unit.position = tan_cand
 
 func _get_student_bond_level(unit: CombatUnitScript) -> int:
@@ -1632,7 +1783,7 @@ func _find_caster_striker(caster_id: String) -> CombatUnitScript:
 		return null
 	var cid_low: String = caster_id.to_lower()
 	for unit in squad_units:
-		if not (unit is CombatUnitScript) or not is_instance_valid(unit):
+		if typeof(unit) != TYPE_OBJECT or not is_instance_valid(unit) or not (unit is CombatUnitScript):
 			continue
 		var cu := unit as CombatUnitScript
 		var uid: String = cu.unit_data.id.to_lower() if cu.unit_data != null else ""
@@ -1737,6 +1888,8 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 				wall.take_structural_damage(skill.wall_damage, skill.penetration_power)
 				if was_intact and wall.is_destroyed:
 					breached_count += 1
+					if encounter_zone_manager != null:
+						encounter_zone_manager.notify_wall_destroyed(wall)
 					if feel_manager != null:
 						feel_manager.spawn_explosion_burst(w_center, 2.2, Color(1.0, 0.72, 0.25), 0.30)
 					if health_bar_overlay != null:
@@ -1744,6 +1897,7 @@ func _on_ex_skill_activated(skill: SkillData, target_pos: Vector3) -> void:
 
 	if breached_count > 0:
 		_invalidate_ai_cache()
+		_invalidate_nav_paths()
 		if feel_manager != null:
 			feel_manager.play_sfx("breach", -4.0)
 			feel_manager.trigger_feedback("LARGE", target_pos, camera_rig)
@@ -1900,7 +2054,7 @@ func _get_units_centroid(units_list: Array) -> Vector3:
 	var sum := Vector3.ZERO
 	var count: int = 0
 	for u in units_list:
-		if u is Node3D and is_instance_valid(u):
+		if typeof(u) == TYPE_OBJECT and is_instance_valid(u) and u is Node3D:
 			var n := u as Node3D
 			sum += n.global_position if n.is_inside_tree() else n.position
 			count += 1
@@ -2062,7 +2216,7 @@ func _on_commander_zones_updated(_zones: Array) -> void:
 func _clear_active_zone_discs() -> void:
 	for zid in active_zone_discs:
 		var disc: Variant = active_zone_discs[zid]
-		if disc is Node and is_instance_valid(disc):
+		if typeof(disc) == TYPE_OBJECT and is_instance_valid(disc) and disc is Node:
 			var n := disc as Node
 			if n.get_parent() != null:
 				n.get_parent().remove_child(n)
@@ -2102,7 +2256,7 @@ func _sync_tactical_zone_discs() -> void:
 			stale_ids.append(existing_id)
 	for sid_key in stale_ids:
 		var stale: Variant = active_zone_discs[sid_key]
-		if stale is Node and is_instance_valid(stale):
+		if typeof(stale) == TYPE_OBJECT and is_instance_valid(stale) and stale is Node:
 			var sn := stale as Node
 			if sn.get_parent() != null:
 				sn.get_parent().remove_child(sn)
@@ -2473,6 +2627,7 @@ func _clear_enemies() -> void:
 			_unit_last_hp_state.erase(uid)
 			_unit_last_status_tag.erase(uid)
 			_unit_cooldowns.erase(uid)
+			_unit_nav_paths.erase(uid)
 			if e.get_parent() != null:
 				e.get_parent().remove_child(e)
 			e.free()
@@ -2642,9 +2797,12 @@ func _on_projectile_impact(impact_pos: Vector3, target_unit: Variant, damage: in
 	if typeof(target_unit) == TYPE_OBJECT and is_instance_valid(target_unit) and target_unit is EnemyUnitScript:
 		_alert_enemy_squad(target_unit as EnemyUnitScript)
 
-func _on_projectile_wall_hit(_wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
+func _on_projectile_wall_hit(wall: Object, hit_pos: Vector3, penetrated: bool, wall_destroyed: bool) -> void:
 	if wall_destroyed:
+		if encounter_zone_manager != null and wall != null:
+			encounter_zone_manager.notify_wall_destroyed(wall)
 		_invalidate_ai_cache()
+		_invalidate_nav_paths()
 		if feel_manager != null:
 			feel_manager.spawn_explosion_burst(hit_pos, 2.0, Color(1.0, 0.76, 0.25), 0.30)
 			feel_manager.trigger_feedback("MEDIUM", hit_pos, camera_rig)

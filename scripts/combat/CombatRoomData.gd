@@ -5,6 +5,8 @@ extends Node3D
 const TacticalTerrainZoneScript := preload("res://scripts/combat/TacticalTerrainZone.gd")
 const DestructibleWall3DScript := preload("res://scripts/combat/DestructibleWall3D.gd")
 
+signal wall_obstacle_added(wall: Node3D)
+
 @export var room_type: String = "COMBAT"
 @export var arena_size: Vector2 = Vector2(64.0, 56.0)
 
@@ -307,6 +309,7 @@ func register_wall_obstacle(wall: Node3D) -> void:
 		for sector in linked_sectors:
 			if sector != null and is_instance_valid(sector) and sector != self and sector.has_method(&"invalidate_wall_cache"):
 				sector.invalidate_wall_cache()
+		wall_obstacle_added.emit(wall)
 
 ## Zero-copy Z-band filtered query returning the first wall blocking world_pos within padding.
 func find_wall_blocking_point(world_pos: Vector3, padding: float = 0.36) -> Object:

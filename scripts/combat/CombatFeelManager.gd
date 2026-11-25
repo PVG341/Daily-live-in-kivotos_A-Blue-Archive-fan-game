@@ -145,7 +145,7 @@ func _attach_vfx_node(node: Node3D) -> void:
 	while _active_vfx.size() >= MAX_ACTIVE_VFX:
 		var oldest: Dictionary = _active_vfx.pop_front()
 		var old_n: Variant = oldest.get("node", null)
-		if old_n is Node and is_instance_valid(old_n):
+		if typeof(old_n) == TYPE_OBJECT and is_instance_valid(old_n) and old_n is Node:
 			var on := old_n as Node
 			if on.get_parent() != null:
 				on.get_parent().remove_child(on)
@@ -309,7 +309,8 @@ func trigger_unit_hit_flash(unit: Node3D) -> void:
 		return
 	vis_root.scale = Vector3(1.14, 0.88, 1.14)
 	for entry in _active_flashes:
-		if entry.get("vis_root", null) == vis_root:
+		var evr: Variant = entry.get("vis_root", null)
+		if typeof(evr) == TYPE_OBJECT and is_instance_valid(evr) and evr == vis_root:
 			entry["elapsed"] = 0.0
 			return
 	_active_flashes.append({
@@ -332,7 +333,7 @@ func tick_effects(real_delta: float) -> void:
 	var remaining_vfx: Array[Dictionary] = []
 	for entry in _active_vfx:
 		var node: Variant = entry.get("node", null)
-		if not (node is Node3D) or not is_instance_valid(node):
+		if typeof(node) != TYPE_OBJECT or not is_instance_valid(node) or not (node is Node3D):
 			continue
 		var elapsed: float = float(entry.get("elapsed", 0.0)) + dt
 		var duration: float = maxf(0.02, float(entry.get("duration", 0.2)))
@@ -365,7 +366,7 @@ func tick_effects(real_delta: float) -> void:
 	var remaining_flashes: Array[Dictionary] = []
 	for fentry in _active_flashes:
 		var vr: Variant = fentry.get("vis_root", null)
-		if not (vr is Node3D) or not is_instance_valid(vr):
+		if typeof(vr) != TYPE_OBJECT or not is_instance_valid(vr) or not (vr is Node3D):
 			continue
 		var vis := vr as Node3D
 		var elapsed: float = float(fentry.get("elapsed", 0.0)) + dt
@@ -385,7 +386,7 @@ func clear_effects() -> void:
 	hit_stop_scale = 1.0
 	for entry in _active_vfx:
 		var node: Variant = entry.get("node", null)
-		if node is Node and is_instance_valid(node):
+		if typeof(node) == TYPE_OBJECT and is_instance_valid(node) and node is Node:
 			var n := node as Node
 			if n.get_parent() != null:
 				n.get_parent().remove_child(n)
@@ -394,6 +395,6 @@ func clear_effects() -> void:
 
 	for fentry in _active_flashes:
 		var vr: Variant = fentry.get("vis_root", null)
-		if vr is Node3D and is_instance_valid(vr):
+		if typeof(vr) == TYPE_OBJECT and is_instance_valid(vr) and vr is Node3D:
 			(vr as Node3D).scale = Vector3.ONE
 	_active_flashes.clear()
