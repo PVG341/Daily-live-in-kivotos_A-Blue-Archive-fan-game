@@ -84,10 +84,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -180.0
-offset_top = -100.0
-offset_right = 180.0
-offset_bottom = 100.0
+offset_left = -240.0
+offset_top = -170.0
+offset_right = 240.0
+offset_bottom = 170.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -99,6 +99,11 @@ theme_override_constants/separation = 12
 layout_mode = 2
 horizontal_alignment = 1
 text = "VICTORY"
+
+[node name="RewardSummaryLabel" type="Label" parent="CombatUIOverlay/ResultPanel/VBoxContainer"]
+layout_mode = 2
+autowrap_mode = 2
+text = "Rewards summary..."
 
 [node name="RestartButton" type="Button" parent="CombatUIOverlay/ResultPanel/VBoxContainer"]
 layout_mode = 2

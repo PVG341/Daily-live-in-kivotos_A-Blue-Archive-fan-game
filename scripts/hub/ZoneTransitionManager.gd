@@ -6,6 +6,7 @@ signal transition_completed(target_scene_path: String, spawn_point_id: String)
 
 var current_scene_path: String = ""
 var pending_spawn_point_id: String = ""
+var pending_combat_config: Dictionary = {}
 var active_camera_mode: int = -1
 var spawn_points: Dictionary = {}
 var loading_tips: Array[String] = [
@@ -27,6 +28,14 @@ func get_spawn_position(id: String) -> Vector3:
 
 func clear_spawn_points() -> void:
 	spawn_points.clear()
+
+func set_pending_combat_config(config: Dictionary) -> void:
+	pending_combat_config = config.duplicate(true)
+
+func consume_pending_combat_config() -> Dictionary:
+	var copy: Dictionary = pending_combat_config.duplicate(true)
+	pending_combat_config.clear()
+	return copy
 
 func get_random_tip() -> String:
 	if loading_tips.is_empty():

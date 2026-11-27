@@ -2,6 +2,9 @@
 class_name HubSceneController
 extends Node3D
 
+const MissionTerminalScript := preload("res://scripts/hub/MissionTerminal.gd")
+const SortieDispatchServiceScript := preload("res://scripts/combat/SortieDispatchService.gd")
+
 @export var hud_path: NodePath
 @export var sensei_path: NodePath
 @export var phone_os_path: NodePath
@@ -17,10 +20,13 @@ var pause_menu: PauseMenuManager = null
 var settings_menu: Control = null
 var mod_manager: ModManagerUI = null
 var shittim_chest: ShittimChestSpaceManager = null
+var mission_terminal: InteractableBase = null
+var _sortie_service := SortieDispatchServiceScript.new()
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_resolve_nodes()
+	_ensure_mission_terminal()
 	_connect_signals()
 	if settings_menu != null:
 		settings_menu.visible = false
@@ -143,6 +149,72 @@ func _search_children_by_type(parent: Node, target_type: Variant) -> Node:
 			return found
 	return null
 
+func _ensure_mission_terminal() -> void:
+	var existing := _search_children_by_type(self, MissionTerminalScript) as InteractableBase
+	if existing != null:
+		mission_terminal = existing
+		return
+	var desk := find_child("SenseiDesk", true, false) as Node3D
+	if desk == null:
+		return
+	var term := MissionTerminalScript.new()
+	term.name = "MissionTerminal"
+	term.position = Vector3(-0.65, 0.65, 0.0)
+
+	var col := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.75, 0.55, 0.45)
+	col.shape = box
+	term.add_child(col)
+
+	var screen := MeshInstance3D.new()
+	screen.name = "TerminalScreenMesh"
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.60, 0.36, 0.06)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.16, 0.78, 0.98)
+	mat.emission_enabled = true
+	mat.emission = Color(0.16, 0.82, 1.0)
+	mat.emission_energy_multiplier = 1.4
+	mesh.material = mat
+	screen.mesh = mesh
+	screen.rotation.x = deg_to_rad(-18.0)
+	term.add_child(screen)
+
+	desk.add_child(term)
+	mission_terminal = term
+
+func _on_mission_terminal_activated(_terminal: Node) -> void:
+	if phone_os != null:
+		phone_os.open_tab("MISSIONS")
+		_sync_mouse_mode()
+
+func _on_sortie_launch_requested(
+	mission_id: String,
+	striker_ids: Array[String],
+	special_ids: Array[String],
+	challenge_modifiers: Array[String]
+) -> void:
+	var dcm: Node = get_node_or_null("/root/DayCycleManager") if is_inside_tree() else null
+	var ztm: Node = get_node_or_null("/root/ZoneTransitionManager") if is_inside_tree() else null
+	var cur_scene: String = scene_file_path if not scene_file_path.is_empty() else "res://scenes/hub/zones/schale_building.tscn"
+	var res: Dictionary = _sortie_service.validate_and_launch_sortie(
+		mission_id,
+		striker_ids,
+		special_ids,
+		challenge_modifiers,
+		dcm,
+		ztm,
+		cur_scene,
+		true
+	)
+	if not bool(res.get("ok", false)):
+		if phone_os != null:
+			phone_os.set_mission_status(str(res.get("error", "Không thể xuất kích!")), true)
+	elif phone_os != null:
+		phone_os.set_mission_status("Đang xuất kích...", false)
+		phone_os.refresh_live_panels()
+
 func _connect_signals() -> void:
 	if pause_menu != null:
 		if not pause_menu.settings_requested.is_connected(_on_settings_requested):
@@ -152,6 +224,11 @@ func _connect_signals() -> void:
 	if phone_os != null:
 		if not phone_os.phone_toggled.is_connected(_on_phone_toggled):
 			phone_os.phone_toggled.connect(_on_phone_toggled)
+		if phone_os.has_signal(&"sortie_launch_requested") and not phone_os.sortie_launch_requested.is_connected(_on_sortie_launch_requested):
+			phone_os.sortie_launch_requested.connect(_on_sortie_launch_requested)
+	if mission_terminal != null and mission_terminal.has_signal(&"terminal_activated"):
+		if not mission_terminal.is_connected(&"terminal_activated", _on_mission_terminal_activated):
+			mission_terminal.connect(&"terminal_activated", _on_mission_terminal_activated)
 	if sensei != null:
 		if not sensei.interactable_focused.is_connected(_on_interactable_focused):
 			sensei.interactable_focused.connect(_on_interactable_focused)
@@ -168,6 +245,11 @@ func _disconnect_signals() -> void:
 	if phone_os != null and is_instance_valid(phone_os):
 		if phone_os.phone_toggled.is_connected(_on_phone_toggled):
 			phone_os.phone_toggled.disconnect(_on_phone_toggled)
+		if phone_os.has_signal(&"sortie_launch_requested") and phone_os.sortie_launch_requested.is_connected(_on_sortie_launch_requested):
+			phone_os.sortie_launch_requested.disconnect(_on_sortie_launch_requested)
+	if mission_terminal != null and is_instance_valid(mission_terminal) and mission_terminal.has_signal(&"terminal_activated"):
+		if mission_terminal.is_connected(&"terminal_activated", _on_mission_terminal_activated):
+			mission_terminal.disconnect(&"terminal_activated", _on_mission_terminal_activated)
 	if sensei != null and is_instance_valid(sensei):
 		if sensei.interactable_focused.is_connected(_on_interactable_focused):
 			sensei.interactable_focused.disconnect(_on_interactable_focused)

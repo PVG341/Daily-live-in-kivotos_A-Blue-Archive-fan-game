@@ -20,6 +20,10 @@ func register_enemy_killed() -> void:
 	if alive_enemies == 0:
 		wave_cleared.emit(current_wave)
 
+## Adds mid-wave enemy reinforcements without emitting wave_started.
+func add_enemies(delta_count: int) -> void:
+	alive_enemies += maxi(0, delta_count)
+
 ## Starts a wave with the given index and enemy count and emits wave_started.
 func start_wave(wave_index: int, enemy_count: int = 0) -> void:
 	current_wave = wave_index

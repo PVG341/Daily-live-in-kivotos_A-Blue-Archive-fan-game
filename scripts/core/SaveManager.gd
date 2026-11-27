@@ -27,6 +27,11 @@ var credits: int = 0
 var bonds: Dictionary = {}
 var bonds_exp: Dictionary = {}
 var inventory: Array = []
+var unlocked_roguelike_cards: Array[String] = []
+var unlocked_skill_variants: Dictionary = {}
+var completed_quests: Dictionary = {}
+var quest_progress: Dictionary = {}
+var last_combat_summary: Dictionary = {}
 var current_zone: String = "schale_office"
 var playtime: float = 0.0
 
@@ -106,6 +111,9 @@ func _on_load_requested(slot: int) -> void:
 	load_game(slot)
 
 func _on_item_picked_up(item_id: String, quantity: int) -> void:
+	add_inventory_item(item_id, quantity)
+
+func add_inventory_item(item_id: String, quantity: int) -> void:
 	if item_id.is_empty() or quantity <= 0:
 		return
 	for entry in inventory:
@@ -113,6 +121,69 @@ func _on_item_picked_up(item_id: String, quantity: int) -> void:
 			entry["qty"] = int(entry.get("qty", 0)) + quantity
 			return
 	inventory.append({"id": item_id, "qty": quantity})
+
+func add_credits(amount: int) -> int:
+	credits += maxi(0, amount)
+	return credits
+
+func unlock_roguelike_card(card_id: String) -> bool:
+	if card_id.is_empty():
+		return false
+	if not unlocked_roguelike_cards.has(card_id):
+		unlocked_roguelike_cards.append(card_id)
+		return true
+	return false
+
+func sync_from_progression(progression_mgr: Object, mission_mgr: Object) -> void:
+	if progression_mgr != null and is_instance_valid(progression_mgr):
+		if progression_mgr.has_method(&"get_unlocked_roguelike_cards"):
+			var cards = progression_mgr.call(&"get_unlocked_roguelike_cards")
+			if cards is Array:
+				for cid in cards:
+					unlock_roguelike_card(str(cid))
+		if &"unlocked_skill_variants" in progression_mgr:
+			var variants = progression_mgr.get(&"unlocked_skill_variants")
+			if variants is Dictionary:
+				for sid in variants:
+					var dest: Array = unlocked_skill_variants.get(sid, []).duplicate()
+					for vid in variants[sid]:
+						if not dest.has(vid):
+							dest.append(vid)
+					unlocked_skill_variants[sid] = dest
+	if mission_mgr != null and is_instance_valid(mission_mgr):
+		if &"completed_quests" in mission_mgr:
+			var cq = mission_mgr.get(&"completed_quests")
+			if cq is Dictionary:
+				for qid in cq:
+					if bool(cq[qid]):
+						completed_quests[qid] = true
+		if &"quest_progress" in mission_mgr:
+			var qp = mission_mgr.get(&"quest_progress")
+			if qp is Dictionary:
+				for qid in qp:
+					quest_progress[qid] = maxi(int(quest_progress.get(qid, 0)), int(qp[qid]))
+
+func sync_to_progression(progression_mgr: Object, mission_mgr: Object) -> void:
+	if progression_mgr != null and is_instance_valid(progression_mgr) and progression_mgr.has_method(&"unlock_horizontal_option"):
+		for cid in unlocked_roguelike_cards:
+			progression_mgr.call(&"unlock_horizontal_option", "", "ROGUELIKE_CARD", str(cid))
+		for sid in unlocked_skill_variants:
+			var arr = unlocked_skill_variants[sid]
+			if arr is Array:
+				for vid in arr:
+					progression_mgr.call(&"unlock_horizontal_option", str(sid), "SKILL_VARIANT", str(vid))
+	if mission_mgr != null and is_instance_valid(mission_mgr):
+		if &"completed_quests" in mission_mgr:
+			var cq = mission_mgr.get(&"completed_quests")
+			if cq is Dictionary:
+				for qid in completed_quests:
+					if bool(completed_quests[qid]):
+						cq[qid] = true
+		if &"quest_progress" in mission_mgr:
+			var qp = mission_mgr.get(&"quest_progress")
+			if qp is Dictionary:
+				for qid in quest_progress:
+					qp[qid] = maxi(int(qp.get(qid, 0)), int(quest_progress[qid]))
 
 func register_student(student: StudentData) -> void:
 	if student and not student.id.is_empty():
@@ -160,6 +231,10 @@ func serialize_game_state() -> Dictionary:
 		"bonds": bonds_copy,
 		"bonds_exp": bonds_exp_copy,
 		"inventory": inventory.duplicate(true),
+		"unlocked_roguelike_cards": unlocked_roguelike_cards.duplicate(),
+		"unlocked_skill_variants": unlocked_skill_variants.duplicate(true),
+		"completed_quests": completed_quests.duplicate(true),
+		"quest_progress": quest_progress.duplicate(true),
 		"current_zone": current_zone,
 		"playtime": playtime
 	}
@@ -206,6 +281,22 @@ func deserialize_game_state(data: Dictionary) -> bool:
 				students[student_id].bond_exp = int(bonds_exp[student_id])
 	if state_data.has("inventory") and state_data["inventory"] is Array:
 		inventory = state_data["inventory"].duplicate(true)
+	unlocked_roguelike_cards.clear()
+	if state_data.has("unlocked_roguelike_cards") and state_data["unlocked_roguelike_cards"] is Array:
+		for raw_cid in state_data["unlocked_roguelike_cards"]:
+			unlock_roguelike_card(str(raw_cid))
+	if state_data.has("unlocked_skill_variants") and state_data["unlocked_skill_variants"] is Dictionary:
+		unlocked_skill_variants = state_data["unlocked_skill_variants"].duplicate(true)
+	else:
+		unlocked_skill_variants = {}
+	if state_data.has("completed_quests") and state_data["completed_quests"] is Dictionary:
+		completed_quests = state_data["completed_quests"].duplicate(true)
+	else:
+		completed_quests = {}
+	if state_data.has("quest_progress") and state_data["quest_progress"] is Dictionary:
+		quest_progress = state_data["quest_progress"].duplicate(true)
+	else:
+		quest_progress = {}
 	if state_data.has("current_zone"):
 		current_zone = str(state_data["current_zone"])
 	if state_data.has("playtime"):
