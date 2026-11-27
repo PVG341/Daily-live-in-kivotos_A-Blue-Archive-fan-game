@@ -605,8 +605,8 @@ func update_order_beacon(beacon: Node3D, world_pos: Vector3, color: Color, visib
 			if cm.material is StandardMaterial3D:
 				(cm.material as StandardMaterial3D).albedo_color = color
 
-## Attaches translucent red telegraph discs to a TelegraphedAoE node.
-func attach_aoe_visuals(aoe: Node3D, radius: float) -> void:
+## Attaches translucent telegraph discs to a TelegraphedAoE or support strike node.
+func attach_aoe_visuals(aoe: Node3D, radius: float, color: Color = Color(1.0, 0.2, 0.15)) -> void:
 	if aoe == null:
 		return
 	var safe_radius: float = maxf(0.1, radius)
@@ -620,7 +620,7 @@ func attach_aoe_visuals(aoe: Node3D, radius: float) -> void:
 	var danger_mat := StandardMaterial3D.new()
 	danger_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	danger_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	danger_mat.albedo_color = Color(1.0, 0.15, 0.15, 0.35)
+	danger_mat.albedo_color = Color(color.r, color.g, color.b, 0.35)
 	danger_mesh.material = danger_mat
 	danger_inst.mesh = danger_mesh
 	danger_inst.position = Vector3(0.0, 0.03, 0.0)
@@ -635,7 +635,7 @@ func attach_aoe_visuals(aoe: Node3D, radius: float) -> void:
 	var fill_mat := StandardMaterial3D.new()
 	fill_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	fill_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	fill_mat.albedo_color = Color(1.0, 0.05, 0.05, 0.55)
+	fill_mat.albedo_color = Color(color.r, color.g, color.b, 0.55)
 	fill_mesh.material = fill_mat
 	fill_inst.mesh = fill_mesh
 	fill_inst.position = Vector3(0.0, 0.04, 0.0)

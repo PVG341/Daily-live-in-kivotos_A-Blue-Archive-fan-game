@@ -10,7 +10,7 @@ const GATEWAY_WIDTH: float = 16.0
 
 ## Generates a dungeon room sequence starting with COMBAT, ending with BOSS, and avoiding adjacent REST rooms.
 ## Also computes contiguous world-space sector origins along the -Z campaign advance axis for seamless battlefields.
-func generate_layout(room_count: int = 5, difficulty: int = 1) -> Array[Dictionary]:
+func generate_layout(room_count: int = 5, difficulty: int = 1, allow_rest_rooms: bool = true) -> Array[Dictionary]:
 	var total_rooms: int = maxi(2, room_count)
 	var eff_difficulty: int = maxi(1, difficulty)
 	var result: Array[Dictionary] = []
@@ -25,7 +25,7 @@ func generate_layout(room_count: int = 5, difficulty: int = 1) -> Array[Dictiona
 		elif i == total_rooms - 1:
 			room_type = "BOSS"
 		else:
-			var pool: Array[String] = NON_REST_MIDDLE_TYPES if prev_type == "REST" else MIDDLE_ROOM_TYPES
+			var pool: Array[String] = NON_REST_MIDDLE_TYPES if (not allow_rest_rooms or prev_type == "REST") else MIDDLE_ROOM_TYPES
 			room_type = pool[randi() % pool.size()]
 
 		var dims: Vector2 = _get_sector_dimensions(room_type)

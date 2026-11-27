@@ -31,6 +31,10 @@ const CommanderDirectiveSystemScript := preload("res://scripts/combat/CommanderD
 const UtilityAIManagerScript := preload("res://scripts/combat/ai/UtilityAIManager.gd")
 const EncounterZoneManagerScript := preload("res://scripts/combat/EncounterZoneManager.gd")
 const CombatFeelManagerScript := preload("res://scripts/combat/CombatFeelManager.gd")
+const ProgressionManagerScript := preload("res://scripts/core/ProgressionManager.gd")
+const MissionManagerScript := preload("res://scripts/core/MissionManager.gd")
+const QuestDataScript := preload("res://scripts/data/QuestData.gd")
+const SortieDispatchServiceScript := preload("res://scripts/combat/SortieDispatchService.gd")
 
 const BOSS_AOE_INTERVAL: float = 4.5
 const EVENT_CHECK_INTERVAL: float = 5.0
@@ -56,6 +60,8 @@ var ex_skill_system: EXSkillSystemScript
 var commander_system: CommanderDirectiveSystemScript
 var utility_ai: UtilityAIManagerScript
 var feel_manager: CombatFeelManagerScript
+var progression_manager: ProgressionManagerScript
+var mission_manager: MissionManagerScript
 var seamless_mode: bool = true
 
 var tanker_ai: TankerAIScript
@@ -82,8 +88,19 @@ var squad_units: Array[CombatUnitScript] = []
 var enemy_units: Array[EnemyUnitScript] = []
 var cover_points: Array[CoverPoint3DScript] = []
 var active_aoes: Array[TelegraphedAoEScript] = []
+var _active_artillery_strikes: Array[Dictionary] = []
+var _third_party_units: Array[EnemyUnitScript] = []
 var special_students: Array[StudentData] = []
 var current_draft_cards: Array[Dictionary] = []
+
+var active_run_config: Dictionary = {}
+var run_collected_loot: Dictionary = {}
+var run_credits_earned: int = 0
+var run_enemies_killed: int = 0
+var run_bosses_killed: int = 0
+var run_unlocked_cards: Array[String] = []
+var run_completed_quests: Array[String] = []
+var run_events_triggered: Array[String] = []
 
 var current_room_info: CombatRoomDataScript = null
 var skill_preview_disc: Node3D = null
@@ -137,7 +154,16 @@ func _ready() -> void:
 		effects_container.add_child(order_beacon)
 	_connect_signals()
 	_ensure_combat_input_bindings()
-	_setup_default_squad()
+	_setup_default_quests()
+	var ztm := get_node_or_null("/root/ZoneTransitionManager")
+	var pending_cfg: Dictionary = {}
+	if ztm != null and ztm.has_method(&"consume_pending_combat_config"):
+		pending_cfg = ztm.call(&"consume_pending_combat_config")
+	if not pending_cfg.is_empty():
+		apply_run_config(pending_cfg)
+	else:
+		active_run_config = _build_default_run_config()
+		_setup_default_squad()
 	start_run()
 
 func _exit_tree() -> void:
@@ -149,7 +175,9 @@ func _exit_tree() -> void:
 	if feel_manager != null:
 		feel_manager.clear_effects()
 	_clear_active_aoes()
+	_clear_artillery_strikes()
 	_clear_active_zone_discs()
+	_third_party_units.clear()
 	_unit_flank_memory.clear()
 	_unit_nav_paths.clear()
 	_unit_ai_cache.clear()
@@ -282,14 +310,95 @@ func _unhandled_input(event: InputEvent) -> void:
 			if armed_tool == CommanderDirectiveSystemScript.ToolMode.NONE and selection_box_overlay != null:
 				selection_box_overlay.set_drag_rect(true, Rect2(_drag_start_pos, mm.position - _drag_start_pos).abs())
 
+func _build_default_run_config() -> Dictionary:
+	return {
+		"mission_id": "schale_patrol_normal",
+		"mission_title": "Tuần tra Schale (Thường)",
+		"mode": "DUNGEON",
+		"difficulty": 1,
+		"ap_cost": 0,
+		"room_count": 4,
+		"reward_credits": 1200,
+		"reward_card_id": "tactical_overdrive",
+		"challenge_modifiers": [],
+		"striker_ids": ["hoshino", "shiroko", "serika", "hanae"],
+		"special_ids": ["hibiki", "serina"],
+		"return_scene": "res://scenes/hub/zones/schale_building.tscn",
+		"return_spawn": "office_desk",
+		"launched_from_hub": false,
+	}
+
+func _sync_progression_from_save() -> void:
+	var save_mgr := get_node_or_null("/root/SaveManager") if is_inside_tree() else null
+	if save_mgr != null and save_mgr.has_method(&"sync_to_progression"):
+		save_mgr.call(&"sync_to_progression", progression_manager, mission_manager)
+	if progression_manager != null:
+		card_manager.sync_unlocked_cards(progression_manager)
+
+func _setup_default_quests() -> void:
+	if mission_manager == null:
+		return
+	if not mission_manager.quests.has("quest_clear_patrol_1"):
+		var q1 := QuestDataScript.new()
+		q1.id = "quest_clear_patrol_1"
+		q1.title = "Tuần tra Khu vực Schale"
+		q1.student_id = "shiroko"
+		q1.required_bond_level = 1
+		q1.objective_type = "CLEAR_DUNGEON"
+		q1.target_id = ""
+		q1.target_count = 1
+		q1.unlocks_roguelike_card_id = "schale_tactical_focus"
+		mission_manager.register_quest(q1)
+	if not mission_manager.quests.has("quest_defeat_heavy_1"):
+		var q2 := QuestDataScript.new()
+		q2.id = "quest_defeat_heavy_1"
+		q2.title = "Phá Giáp Khiên Hạng Nặng"
+		q2.student_id = "hoshino"
+		q2.required_bond_level = 1
+		q2.objective_type = "DEFEAT_ENEMY"
+		q2.target_id = "SHIELD_HEAVY"
+		q2.target_count = 2
+		q2.unlocks_roguelike_card_id = "anti_armor_rounds"
+		mission_manager.register_quest(q2)
+	_sync_progression_from_save()
+
+## Applies an external sortie configuration (from Hub/PhoneOS/tests) before starting a run.
+func apply_run_config(config: Dictionary) -> void:
+	active_run_config = config.duplicate(true)
+	if progression_manager != null:
+		progression_manager.set_challenge_modifiers(active_run_config.get("challenge_modifiers", []))
+	_sync_progression_from_save()
+	special_students.clear()
+	if ex_skill_system != null:
+		ex_skill_system.registered_skills.clear()
+		ex_skill_system.cooldown_remaining.clear()
+	_setup_default_squad()
+
 ## Starts or restarts a 4-room Roguelike dungeon run on the seamless multi-sector battlefield.
-func start_run(difficulty: int = 1) -> void:
+func start_run(difficulty: int = -1) -> void:
 	run_finished = false
+	_boss_aoe_timer = 2.5
+	_event_check_timer = 0.0
+	run_collected_loot.clear()
+	run_credits_earned = 0
+	run_enemies_killed = 0
+	run_bosses_killed = 0
+	run_unlocked_cards.clear()
+	run_completed_quests.clear()
+	run_events_triggered.clear()
+	_clear_artillery_strikes()
+	_third_party_units.clear()
 	_unit_cooldowns.clear()
 	_unit_nav_paths.clear()
 	_unit_ai_cache.clear()
 	_unit_last_status_tag.clear()
 	_unit_last_hp_state.clear()
+	if active_run_config.is_empty():
+		active_run_config = _build_default_run_config()
+	var eff_diff: int = difficulty if difficulty > 0 else int(active_run_config.get("difficulty", 1))
+	if progression_manager != null:
+		progression_manager.set_challenge_modifiers(active_run_config.get("challenge_modifiers", []))
+	_sync_progression_from_save()
 	card_manager.clear_session_buffs()
 	if combat_hud != null:
 		combat_hud.clear_hud()
@@ -302,7 +411,9 @@ func start_run(difficulty: int = 1) -> void:
 		card_draft_panel.visible = false
 
 	_spawn_persistent_strikers()
-	var layout: Array[Dictionary] = layout_generator.generate_layout(4, difficulty)
+	var allow_rest: bool = not (progression_manager != null and progression_manager.active_challenge_modifiers.has("NO_REST_ROOMS"))
+	var r_count: int = clampi(int(active_run_config.get("room_count", 4)), 2, 8)
+	var layout: Array[Dictionary] = layout_generator.generate_layout(r_count, eff_diff, allow_rest)
 	if seamless_mode and encounter_zone_manager != null:
 		encounter_zone_manager.build_seamless_battlefield(room_container, layout)
 		_apply_battlefield_camera_bounds()
@@ -388,14 +499,19 @@ func step_combat(delta: float) -> void:
 		_tick_enemy(enemy, delta, living_strikers)
 
 		if enemy is BossUnitScript:
+			var boss := enemy as BossUnitScript
+			var double_boss: bool = progression_manager != null and progression_manager.active_challenge_modifiers.has("DOUBLE_BOSS_PHASE")
 			_boss_aoe_timer -= delta
 			if _boss_aoe_timer <= 0.0 and not living_strikers.is_empty():
-				_boss_aoe_timer = BOSS_AOE_INTERVAL
+				_boss_aoe_timer = BOSS_AOE_INTERVAL * (0.72 if double_boss else 1.0)
 				var target_striker: CombatUnitScript = living_strikers[0]
-				spawn_boss_telegraphed_aoe(enemy as BossUnitScript, target_striker.position)
+				spawn_boss_telegraphed_aoe(boss, target_striker.position)
+				if double_boss and boss.current_phase >= 2 and living_strikers.size() > 1:
+					spawn_boss_telegraphed_aoe(boss, (living_strikers[1] as CombatUnitScript).position)
 
-	# 4. Tick active telegraphed AoEs and free detonated instances
+	# 4. Tick active telegraphed AoEs, artillery strikes & free detonated instances
 	_tick_active_aoes(delta)
+	_tick_artillery_strikes(delta)
 
 	# 5. Tick projectiles
 	if projectile_manager != null:
@@ -489,6 +605,8 @@ func _setup_child_managers() -> void:
 	ex_skill_system = _ensure_child(EXSkillSystemScript, "EXSkillSystem") as EXSkillSystemScript
 	commander_system = _ensure_child(CommanderDirectiveSystemScript, "CommanderDirectiveSystem") as CommanderDirectiveSystemScript
 	feel_manager = _ensure_child(CombatFeelManagerScript, "CombatFeelManager") as CombatFeelManagerScript
+	progression_manager = _ensure_child(ProgressionManagerScript, "ProgressionManager") as ProgressionManagerScript
+	mission_manager = _ensure_child(MissionManagerScript, "MissionManager") as MissionManagerScript
 	tanker_ai = _ensure_child(TankerAIScript, "TankerAI") as TankerAIScript
 	dps_ai = _ensure_child(DamageDealerAIScript, "DamageDealerAI") as DamageDealerAIScript
 	healer_ai = _ensure_child(HealerAIScript, "HealerAI") as HealerAIScript
@@ -536,6 +654,16 @@ func _ensure_container(container_name: String) -> Node3D:
 		add_child(node)
 	return node
 
+func _get_loaded_mod_student(student_id: String) -> StudentData:
+	var ml := get_node_or_null("/root/ModLoader") if is_inside_tree() else null
+	if ml == null or not (&"loaded_students" in ml):
+		return null
+	var loaded_val: Variant = ml.get(&"loaded_students")
+	if not (loaded_val is Dictionary):
+		return null
+	var candidate: Variant = (loaded_val as Dictionary).get(student_id, null)
+	return candidate as StudentData if candidate is StudentData else null
+
 func _setup_default_squad() -> void:
 	if not special_students.is_empty():
 		return
@@ -580,6 +708,39 @@ func _setup_default_squad() -> void:
 	sp_serina.squad_slot = StudentData.SquadSlot.SPECIAL
 	sp_serina.skills = [sk_heal]
 
+	var builtin_specials: Dictionary = {
+		"hibiki": sp_hibiki,
+		"serina": sp_serina,
+	}
+	var wanted_specials: Array = active_run_config.get("special_ids", [])
+	if wanted_specials.is_empty():
+		wanted_specials = ["hibiki", "serina"]
+	var chosen_specials: Array[StudentData] = []
+	for sp_raw in wanted_specials:
+		var sp_id: String = str(sp_raw)
+		if builtin_specials.has(sp_id):
+			chosen_specials.append(builtin_specials[sp_id])
+		else:
+			var mod_sp: StudentData = _get_loaded_mod_student(sp_id)
+			if mod_sp != null:
+				if mod_sp.skills.is_empty():
+					var fallback_sk := SkillData.new()
+					fallback_sk.id = "mod_ex_%s" % mod_sp.id
+					fallback_sk.name = "%s Strike (3)" % mod_sp.student_name
+					fallback_sk.cost = 3
+					fallback_sk.cooldown = 6.0
+					fallback_sk.aoe_radius = 4.5
+					fallback_sk.cast_range = 20.0
+					fallback_sk.aoe_shape = "CIRCLE"
+					fallback_sk.effect_type = "HEAL" if mod_sp.role == StudentData.CombatRole.HEALER else "DAMAGE"
+					fallback_sk.caster_name = mod_sp.student_name
+					mod_sp.skills = [fallback_sk]
+				chosen_specials.append(mod_sp)
+		if chosen_specials.size() >= 2:
+			break
+	if chosen_specials.is_empty():
+		chosen_specials = [sp_hibiki, sp_serina]
+
 	var sk_shotgun_breach := SkillData.new()
 	sk_shotgun_breach.id = "ex_shotgun_breach"
 	sk_shotgun_breach.name = "Shotgun Breach (2)"
@@ -616,10 +777,28 @@ func _setup_default_squad() -> void:
 	sk_railgun_beam.caster_id = "shiroko"
 	sk_railgun_beam.caster_name = "Shiroko"
 
-	special_students = [sp_hibiki, sp_serina]
+	special_students = chosen_specials
 	ex_skill_system.set_special_students(special_students)
-	ex_skill_system.register_skill(sk_shotgun_breach)
-	ex_skill_system.register_skill(sk_railgun_beam)
+
+	var wanted_strikers: Array = active_run_config.get("striker_ids", [])
+	if wanted_strikers.is_empty() or wanted_strikers.has("hoshino"):
+		ex_skill_system.register_skill(sk_shotgun_breach)
+	if wanted_strikers.is_empty() or wanted_strikers.has("shiroko"):
+		ex_skill_system.register_skill(sk_railgun_beam)
+	for st_raw in wanted_strikers:
+		var st_id: String = str(st_raw)
+		if st_id in ["hoshino", "shiroko", "serika", "hanae"]:
+			continue
+		var mod_st: StudentData = _get_loaded_mod_student(st_id)
+		if mod_st != null and not mod_st.skills.is_empty() and mod_st.skills[0] != null:
+			var msk: SkillData = mod_st.skills[0].duplicate()
+			msk.caster_id = mod_st.id
+			msk.caster_name = mod_st.student_name
+			if msk.cast_range <= 0.0:
+				msk.cast_range = 18.0
+			if msk.aoe_radius <= 0.0:
+				msk.aoe_radius = 4.0
+			ex_skill_system.register_skill(msk)
 	_populate_special_skill_buttons()
 
 func _populate_special_skill_buttons() -> void:
@@ -650,40 +829,101 @@ func _spawn_persistent_strikers() -> void:
 			u.free()
 	squad_units.clear()
 
-	var striker_defs: Array[Dictionary] = [
-		{"id": "hoshino", "name": "Hoshino", "role": StudentData.CombatRole.TANKER, "weapon_class": "SG", "hp": 2200, "atk": 155, "def": 140, "speed": 4.2, "range": 8.0, "atk_cd": 1.05, "proj_speed": 26.0, "pen": 1, "wall_dmg": 45, "shield": 0.40, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.55, 0.72), "halo": Color(1.0, 0.65, 0.85)},
-		{"id": "shiroko", "name": "Shiroko", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "SR", "hp": 1250, "atk": 260, "def": 60, "speed": 5.3, "range": 16.5, "atk_cd": 1.55, "proj_speed": 38.0, "pen": 2, "wall_dmg": 55, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.32, 0.72, 0.96), "halo": Color(0.35, 0.88, 1.0)},
-		{"id": "serika", "name": "Serika", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "ARTILLERY", "hp": 1180, "atk": 195, "def": 55, "speed": 5.0, "range": 13.5, "atk_cd": 1.40, "proj_speed": 22.0, "pen": 1, "wall_dmg": 65, "shield": 0.0, "aoe": true, "aoe_rad": 2.8, "color": Color(0.28, 0.28, 0.36), "halo": Color(0.95, 0.35, 0.45)},
-		{"id": "hanae", "name": "Hanae", "role": StudentData.CombatRole.HEALER, "hp": 1100, "weapon_class": "HG", "atk": 130, "def": 55, "speed": 4.8, "range": 10.0, "atk_cd": 1.15, "proj_speed": 24.0, "pen": 0, "wall_dmg": 18, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.82, 0.45), "halo": Color(0.55, 1.0, 0.65)},
-	]
+	var builtin_map: Dictionary = {
+		"hoshino": {"id": "hoshino", "name": "Hoshino", "role": StudentData.CombatRole.TANKER, "weapon_class": "SG", "hp": 2200, "atk": 155, "def": 140, "speed": 4.2, "range": 8.0, "atk_cd": 1.05, "proj_speed": 26.0, "pen": 1, "wall_dmg": 45, "shield": 0.40, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.55, 0.72), "halo": Color(1.0, 0.65, 0.85)},
+		"shiroko": {"id": "shiroko", "name": "Shiroko", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "SR", "hp": 1250, "atk": 260, "def": 60, "speed": 5.3, "range": 16.5, "atk_cd": 1.55, "proj_speed": 38.0, "pen": 2, "wall_dmg": 55, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.32, 0.72, 0.96), "halo": Color(0.35, 0.88, 1.0)},
+		"serika": {"id": "serika", "name": "Serika", "role": StudentData.CombatRole.DAMAGE_DEALER, "weapon_class": "ARTILLERY", "hp": 1180, "atk": 195, "def": 55, "speed": 5.0, "range": 13.5, "atk_cd": 1.40, "proj_speed": 22.0, "pen": 1, "wall_dmg": 65, "shield": 0.0, "aoe": true, "aoe_rad": 2.8, "color": Color(0.28, 0.28, 0.36), "halo": Color(0.95, 0.35, 0.45)},
+		"hanae": {"id": "hanae", "name": "Hanae", "role": StudentData.CombatRole.HEALER, "hp": 1100, "weapon_class": "HG", "atk": 130, "def": 55, "speed": 4.8, "range": 10.0, "atk_cd": 1.15, "proj_speed": 24.0, "pen": 0, "wall_dmg": 18, "shield": 0.0, "aoe": false, "aoe_rad": 2.0, "color": Color(0.95, 0.82, 0.45), "halo": Color(0.55, 1.0, 0.65)},
+	}
+
+	var wanted_ids: Array = active_run_config.get("striker_ids", [])
+	if wanted_ids.is_empty():
+		wanted_ids = ["hoshino", "shiroko", "serika", "hanae"]
 
 	var initial_hp_map: Dictionary = {}
-	for def_dict in striker_defs:
-		var sd := StudentData.new()
-		sd.id = str(def_dict["id"])
-		sd.student_name = str(def_dict["name"])
-		sd.role = def_dict["role"]
-		sd.squad_slot = StudentData.SquadSlot.STRIKER
-		sd.base_hp = int(def_dict["hp"])
-		sd.base_atk = int(def_dict["atk"])
-		sd.base_def = int(def_dict["def"])
-		sd.base_speed = float(def_dict["speed"])
-		sd.attack_range = float(def_dict["range"])
+	for raw_id in wanted_ids:
+		if squad_units.size() >= 4:
+			break
+		var sid: String = str(raw_id)
+		var sd: StudentData = null
+		var wclass: String = "AR"
+		var atk_cd: float = STRIKER_ATTACK_COOLDOWN
+		var proj_speed: float = 24.0
+		var pen: int = 0
+		var wall_dmg: int = 30
+		var shield_ratio: float = 0.0
+		var is_aoe: bool = false
+		var aoe_rad: float = 2.0
+		var body_col := Color(0.32, 0.85, 0.72)
+		var halo_col := Color(0.45, 0.96, 1.0)
+
+		if builtin_map.has(sid):
+			var d: Dictionary = builtin_map[sid]
+			sd = StudentData.new()
+			sd.id = str(d["id"])
+			sd.student_name = str(d["name"])
+			sd.role = d["role"]
+			sd.squad_slot = StudentData.SquadSlot.STRIKER
+			sd.base_hp = int(d["hp"])
+			sd.base_atk = int(d["atk"])
+			sd.base_def = int(d["def"])
+			sd.base_speed = float(d["speed"])
+			sd.attack_range = float(d["range"])
+			wclass = str(d["weapon_class"])
+			atk_cd = float(d["atk_cd"])
+			proj_speed = float(d["proj_speed"])
+			pen = int(d["pen"])
+			wall_dmg = int(d["wall_dmg"])
+			shield_ratio = float(d["shield"])
+			is_aoe = bool(d["aoe"])
+			aoe_rad = float(d["aoe_rad"])
+			body_col = d["color"]
+			halo_col = d["halo"]
+		else:
+			var mod_sd: StudentData = _get_loaded_mod_student(sid)
+			if mod_sd == null:
+				continue
+			sd = mod_sd
+			match sd.role:
+				StudentData.CombatRole.TANKER:
+					wclass = "SG"
+					shield_ratio = 0.35
+					wall_dmg = 45
+				StudentData.CombatRole.HEALER, StudentData.CombatRole.BUFFER:
+					wclass = "HG"
+					wall_dmg = 20
+				_:
+					if sd.attack_range >= 14.0:
+						wclass = "SR"
+						atk_cd = 1.55
+						proj_speed = 36.0
+						pen = 2
+						wall_dmg = 50
+					else:
+						wclass = "AR"
+						wall_dmg = 35
 
 		var unit := CombatUnitScript.new()
 		unit.name = sd.student_name
 		unit.setup(sd)
-		unit.weapon_class = str(def_dict["weapon_class"])
-		unit.attack_cooldown = float(def_dict["atk_cd"])
-		unit.projectile_speed = float(def_dict["proj_speed"])
-		unit.penetration_power = int(def_dict["pen"])
-		unit.wall_damage = int(def_dict["wall_dmg"])
-		unit.frontal_shield_ratio = float(def_dict["shield"])
-		unit.is_aoe_attacker = bool(def_dict["aoe"])
-		unit.basic_aoe_radius = float(def_dict["aoe_rad"])
+		var bond_lvl: int = _get_student_bond_level(unit)
+		if progression_manager != null:
+			var stat_mult: float = progression_manager.get_permanent_stat_multiplier(sd.id, bond_lvl)
+			if not is_equal_approx(stat_mult, 1.0):
+				unit.max_hp = int(round(float(unit.max_hp) * stat_mult))
+				unit.current_hp = unit.max_hp
+				unit.atk = int(round(float(unit.atk) * stat_mult))
+		unit.weapon_class = wclass
+		unit.attack_cooldown = atk_cd
+		unit.projectile_speed = proj_speed
+		unit.penetration_power = pen
+		unit.wall_damage = wall_dmg
+		unit.frontal_shield_ratio = shield_ratio
+		unit.is_aoe_attacker = is_aoe
+		unit.basic_aoe_radius = aoe_rad
 		unit.order_completed.connect(_on_striker_order_completed)
 		unit.unit_died.connect(_on_striker_died)
-		proxy_factory.attach_unit_visuals(unit, sd.student_name, def_dict["color"], def_dict["halo"], 1.0, sd.attack_range)
+		proxy_factory.attach_unit_visuals(unit, sd.student_name, body_col, halo_col, 1.0, sd.attack_range)
 		if unit.frontal_shield_ratio > 0.0:
 			proxy_factory.attach_front_shield_visual(unit, 1.0, unit.facing_dir)
 		proxy_factory.update_unit_hp_label(unit, sd.student_name, unit.current_hp, unit.max_hp, false)
@@ -692,7 +932,7 @@ func _spawn_persistent_strikers() -> void:
 		squad_units.append(unit)
 		initial_hp_map[sd.id] = unit.current_hp
 		if combat_hud != null and combat_hud.has_method(&"update_striker_meta"):
-			combat_hud.update_striker_meta(sd.id, sd.student_name, unit.weapon_class, def_dict["color"])
+			combat_hud.update_striker_meta(sd.id, sd.student_name, unit.weapon_class, body_col)
 
 	room_manager.set_squad_hp(initial_hp_map)
 	if commander_system != null:
@@ -831,18 +1071,24 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 
 	var sector_alerted_default: bool = (room_index == 0 or not use_seamless)
 
+	var enemy_speed_up: bool = progression_manager != null and progression_manager.active_challenge_modifiers.has("ENEMY_SPEED_UP")
+	var double_boss: bool = progression_manager != null and progression_manager.active_challenge_modifiers.has("DOUBLE_BOSS_PHASE")
+
 	if room_type == "BOSS":
 		var boss := BossUnitScript.new()
 		boss.name = "Hieronymus_Proxy"
 		boss.max_hp = 5000 + difficulty * 1500
+		if double_boss:
+			boss.max_hp = int(round(float(boss.max_hp) * 1.20))
 		boss.current_hp = boss.max_hp
 		boss.atk = 155 + difficulty * 25
 		boss.def = 80
-		boss.speed = 3.0
+		boss.speed = 3.0 * (1.25 if enemy_speed_up else 1.0)
 		boss.attack_range = 13.0
 		boss.is_alerted = sector_alerted_default
 		boss.detection_radius = 34.0
 		boss.facing_dir = Vector3(0.0, 0.0, 1.0)
+		boss.loot_table = _build_enemy_loot_table("BOSS", room_type)
 		boss.position = room_info.get_boss_spawn_position() if room_info != null else Vector3(0.0, 0.0, -9.5)
 		boss.patrol_origin = boss.position
 		proxy_factory.attach_unit_visuals(boss, "BOSS", Color(0.75, 0.15, 0.2), Color(1.0, 0.2, 0.2), 1.65)
@@ -917,6 +1163,10 @@ func _on_room_loaded(room_index: int, room_data: Dictionary) -> void:
 				grunt.projectile_speed = 20.0
 				grunt.detection_radius = 26.0
 
+		if enemy_speed_up:
+			grunt.speed *= 1.25
+			grunt.attack_cooldown *= 0.88
+		grunt.loot_table = _build_enemy_loot_table(grunt.enemy_type, room_type)
 		grunt.current_hp = grunt.max_hp
 		if j < enemy_spawns.size():
 			grunt.position = enemy_spawns[j]
@@ -966,12 +1216,68 @@ func _complete_rest_sector_supply(room_index: int) -> void:
 	room_manager.mark_current_room_cleared()
 	_open_card_draft()
 
+func _build_enemy_loot_table(e_type: String, _room_type: String) -> Array[Dictionary]:
+	match e_type:
+		"SHIELD_HEAVY":
+			return [
+				{"id": "armor_scrap", "chance": 0.70},
+				{"id": "cooking_meat", "chance": 0.50},
+			]
+		"SNIPER":
+			return [
+				{"id": "precision_lens", "chance": 0.65},
+				{"id": "tea_leaf_tin", "chance": 0.40},
+			]
+		"ELITE":
+			return [
+				{"id": "crafting_material", "chance": 0.85},
+				{"id": "gourmet_spice", "chance": 0.60},
+				{"id": "tactical_gift_box", "chance": 0.40},
+			]
+		"BOSS":
+			return [
+				{"id": "boss_core_fragment", "chance": 1.0},
+				{"id": "luxury_gift", "chance": 1.0},
+				{"id": "crafting_material", "chance": 1.0},
+			]
+		"HIDDEN_BOSS":
+			return [
+				{"id": "boss_core_fragment", "chance": 1.0},
+				{"id": "luxury_gift", "chance": 1.0},
+				{"id": "rare_spice_blend", "chance": 1.0},
+			]
+		"THIRD_PARTY":
+			return [
+				{"id": "tactical_gift_box", "chance": 0.65},
+				{"id": "basic_alloy", "chance": 1.0},
+			]
+		_:
+			return [
+				{"id": "cooking_veggies", "chance": 0.55},
+				{"id": "basic_alloy", "chance": 0.45},
+			]
+
 func _on_enemy_died(unit: CombatUnitScript) -> void:
 	_invalidate_ai_cache()
-	if unit != null and is_instance_valid(unit):
+	run_enemies_killed += 1
+	if typeof(unit) == TYPE_OBJECT and is_instance_valid(unit):
 		unit.visible = false
 		if commander_system != null and commander_system.priority_target == unit:
 			commander_system.set_priority_target(null)
+		if unit is BossUnitScript or (unit is EnemyUnitScript and (unit as EnemyUnitScript).enemy_type == "HIDDEN_BOSS"):
+			run_bosses_killed += 1
+		if unit is EnemyUnitScript:
+			var eu := unit as EnemyUnitScript
+			if mission_manager != null:
+				mission_manager.record_objective_progress("DEFEAT_ENEMY", eu.enemy_type, 1)
+			for drop in eu.dropped_loot:
+				if drop is Dictionary:
+					var item_id: String = str(drop.get("id", ""))
+					var qty: int = maxi(1, int(drop.get("qty", 1)))
+					if not item_id.is_empty():
+						run_collected_loot[item_id] = int(run_collected_loot.get(item_id, 0)) + qty
+			if not eu.dropped_loot.is_empty() and health_bar_overlay != null:
+				health_bar_overlay.spawn_floating_text(eu.position + Vector3(0.0, 1.5, 0.0), "🎁 +%d vật phẩm" % eu.dropped_loot.size(), Color(1.0, 0.88, 0.35), false)
 	for buff in card_manager.get_active_buffs():
 		if str(buff.get("type", "")) == "HEAL_ON_KILL":
 			var ratio: float = float(buff.get("value", 0.05))
@@ -1015,17 +1321,97 @@ func _open_card_draft() -> void:
 	card_draft_panel.visible = true
 
 func _finish_run(victory: bool) -> void:
+	if run_finished:
+		return
 	run_finished = true
 	if room_manager != null:
 		room_manager.is_draft_open = false
 	if card_draft_panel != null:
 		card_draft_panel.visible = false
+
+	var reward_mult: float = progression_manager.get_challenge_reward_multiplier() if progression_manager != null else 1.0
+	var base_credits: int = int(active_run_config.get("reward_credits", 1200))
+	var diff_val: int = maxi(1, int(active_run_config.get("difficulty", 1)))
+
+	if victory:
+		run_credits_earned = int(round(float(base_credits + run_enemies_killed * 40) * reward_mult))
+		run_collected_loot["schale_ration_pack"] = int(run_collected_loot.get("schale_ration_pack", 0)) + 1
+		run_collected_loot["crafting_material"] = int(run_collected_loot.get("crafting_material", 0)) + diff_val
+		var prev_cards: Array[String] = progression_manager.get_unlocked_roguelike_cards() if progression_manager != null else []
+		if mission_manager != null:
+			mission_manager.record_objective_progress("CLEAR_DUNGEON", "", 1)
+			for qid in mission_manager.quests.keys():
+				if mission_manager.is_quest_ready_to_complete(qid):
+					if mission_manager.complete_quest(qid, null, progression_manager):
+						run_completed_quests.append(str(qid))
+		var m_card_id: String = str(active_run_config.get("reward_card_id", ""))
+		if not m_card_id.is_empty() and progression_manager != null:
+			progression_manager.unlock_horizontal_option("", "ROGUELIKE_CARD", m_card_id)
+		if progression_manager != null:
+			for cid in progression_manager.get_unlocked_roguelike_cards():
+				if not prev_cards.has(cid) and not run_unlocked_cards.has(cid):
+					run_unlocked_cards.append(cid)
+			card_manager.sync_unlocked_cards(progression_manager)
+	else:
+		run_credits_earned = int(round(float(run_enemies_killed * 15) * reward_mult))
+		var salvaged: Dictionary = {}
+		for item_id in run_collected_loot:
+			salvaged[item_id] = maxi(1, int(ceil(float(run_collected_loot[item_id]) * 0.5)))
+		run_collected_loot = salvaged
+
+	var save_mgr := get_node_or_null("/root/SaveManager") if is_inside_tree() else null
+	if save_mgr != null and is_instance_valid(save_mgr):
+		if save_mgr.has_method(&"add_credits"):
+			save_mgr.call(&"add_credits", run_credits_earned)
+		if save_mgr.has_method(&"add_inventory_item"):
+			for item_id in run_collected_loot:
+				save_mgr.call(&"add_inventory_item", str(item_id), int(run_collected_loot[item_id]))
+		if save_mgr.has_method(&"sync_from_progression"):
+			save_mgr.call(&"sync_from_progression", progression_manager, mission_manager)
+		var summary := {
+			"mission_id": str(active_run_config.get("mission_id", "schale_patrol_normal")),
+			"mission_title": str(active_run_config.get("mission_title", "Tuần tra Schale")),
+			"victory": victory,
+			"difficulty": diff_val,
+			"credits_earned": run_credits_earned,
+			"enemies_killed": run_enemies_killed,
+			"bosses_killed": run_bosses_killed,
+			"loot": run_collected_loot.duplicate(true),
+			"unlocked_cards": run_unlocked_cards.duplicate(),
+			"completed_quests": run_completed_quests.duplicate(),
+		}
+		save_mgr.set(&"last_combat_summary", summary)
+		if DisplayServer.get_name() != "headless" and save_mgr.has_method(&"save_game"):
+			var slot: int = int(save_mgr.get(&"current_slot")) if &"current_slot" in save_mgr else 1
+			save_mgr.call(&"save_game", slot)
+
+	if bool(active_run_config.get("launched_from_hub", false)):
+		var dcm := get_node_or_null("/root/DayCycleManager") if is_inside_tree() else null
+		if dcm != null and dcm.has_method(&"advance_time"):
+			dcm.call(&"advance_time", 1.0)
+
 	var msg: String = "DUNGEON CLEARED! Victory!" if victory else "SQUAD DEFEATED!"
 	_update_status_banner(msg)
 	if result_panel != null:
 		var lbl := result_panel.find_child("ResultLabel", true, false) as Label
 		if lbl != null:
 			lbl.text = msg
+		var sum_lbl := result_panel.find_child("RewardSummaryLabel", true, false) as Label
+		if sum_lbl != null:
+			var sum_lines: PackedStringArray = [
+				"Nhiệm vụ: %s (x%.2f thưởng)" % [str(active_run_config.get("mission_title", "Dungeon")), reward_mult],
+				"Hạ gục: %d địch (Boss/Ẩn: %d)  |  Credits: +%d" % [run_enemies_killed, run_bosses_killed, run_credits_earned],
+			]
+			if not run_collected_loot.is_empty():
+				var loot_parts: PackedStringArray = []
+				for lid in run_collected_loot:
+					loot_parts.append("%s x%d" % [str(lid), int(run_collected_loot[lid])])
+				sum_lines.append("Chiến lợi phẩm: %s" % ", ".join(loot_parts))
+			if not run_unlocked_cards.is_empty():
+				sum_lines.append("Mở khóa Thẻ: %s" % ", ".join(run_unlocked_cards))
+			if not run_completed_quests.is_empty():
+				sum_lines.append("Hoàn thành Quest: %s" % ", ".join(run_completed_quests))
+			sum_lbl.text = "\n".join(sum_lines)
 		result_panel.visible = true
 
 func _tick_striker(striker: CombatUnitScript, delta: float, allies: Array, enemies: Array) -> void:
@@ -1306,7 +1692,7 @@ func _alert_enemy_squad(trigger_enemy: EnemyUnitScript) -> void:
 		if typeof(e) != TYPE_OBJECT or not is_instance_valid(e) or not (e is EnemyUnitScript):
 			continue
 		var other := e as EnemyUnitScript
-		if not other.is_alive or other == trigger_enemy:
+		if not other.is_alive or other == trigger_enemy or other.enemy_type == "THIRD_PARTY":
 			continue
 		if not other.is_alerted and other.position.distance_to(trigger_enemy.position) <= 12.0:
 			other.alert()
@@ -1316,6 +1702,23 @@ func _alert_enemy_squad(trigger_enemy: EnemyUnitScript) -> void:
 			health_bar_overlay.spawn_floating_text(trigger_enemy.position + Vector3(0.0, 1.35, 0.0), "❗ PHÁT HIỆN!", Color(1.0, 0.38, 0.22), true)
 		if feel_manager != null:
 			feel_manager.play_sfx("alert", -6.0)
+
+func _get_targets_for_enemy(enemy: EnemyUnitScript, allies: Array) -> Array:
+	if enemy.enemy_type == "THIRD_PARTY":
+		var mixed: Array = allies.duplicate()
+		for other_e in enemy_units:
+			if typeof(other_e) == TYPE_OBJECT and is_instance_valid(other_e) and other_e is EnemyUnitScript:
+				var oe := other_e as EnemyUnitScript
+				if oe.is_alive and oe.enemy_type != "THIRD_PARTY":
+					mixed.append(oe)
+		return mixed
+	if not _third_party_units.is_empty():
+		var with_tp: Array = allies.duplicate()
+		for tp in _third_party_units:
+			if typeof(tp) == TYPE_OBJECT and is_instance_valid(tp) and tp is EnemyUnitScript and (tp as EnemyUnitScript).is_alive:
+				with_tp.append(tp)
+		return with_tp
+	return allies
 
 func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	var uid: int = enemy.get_instance_id()
@@ -1328,9 +1731,10 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 	if not is_equal_approx(enemy.position.y, target_elev):
 		enemy.position.y = lerpf(enemy.position.y, target_elev, minf(1.0, delta * 8.0))
 
+	var enemy_targets: Array = _get_targets_for_enemy(enemy, allies)
 	if not enemy.is_alerted:
-		for unit in allies:
-			if not (unit is CombatUnitScript):
+		for unit in enemy_targets:
+			if typeof(unit) != TYPE_OBJECT or not is_instance_valid(unit) or not (unit is CombatUnitScript):
 				continue
 			var candidate := unit as CombatUnitScript
 			if candidate.is_alive and enemy.position.distance_to(candidate.position) <= enemy.detection_radius:
@@ -1339,7 +1743,7 @@ func _tick_enemy(enemy: EnemyUnitScript, delta: float, allies: Array) -> void:
 		if not enemy.is_alerted:
 			return
 
-	var decision: Dictionary = enemy_ai.evaluate(enemy, allies)
+	var decision: Dictionary = enemy_ai.evaluate(enemy, enemy_targets)
 	var action: String = str(decision.get("action", "IDLE"))
 	var target: Variant = decision.get("target", null)
 	if not (target is CombatUnitScript) or action == "IDLE" or action == "UNALERTED":
@@ -1768,15 +2172,192 @@ func _tick_active_aoes(delta: float) -> void:
 	if any_detonated:
 		_invalidate_ai_cache()
 
+func _find_safe_event_spawn_pos(desired_pos: Vector3) -> Vector3:
+	if encounter_zone_manager != null and encounter_zone_manager.nav_grid != null:
+		var safe_cell: Vector2i = encounter_zone_manager.nav_grid.find_nearest_walkable_cell(desired_pos, 8)
+		if safe_cell.x >= 0:
+			var wp: Vector3 = encounter_zone_manager.nav_grid.cell_to_world(safe_cell)
+			return Vector3(wp.x, 0.0, wp.z)
+	return desired_pos
+
+func _clear_artillery_strikes() -> void:
+	for entry in _active_artillery_strikes:
+		var node: Variant = entry.get("node", null)
+		if typeof(node) == TYPE_OBJECT and is_instance_valid(node) and node is Node:
+			var n := node as Node
+			if n.get_parent() != null:
+				n.get_parent().remove_child(n)
+			n.free()
+	_active_artillery_strikes.clear()
+
+func _tick_artillery_strikes(delta: float) -> void:
+	if _active_artillery_strikes.is_empty():
+		return
+	var remaining: Array[Dictionary] = []
+	var breached_any: bool = false
+	for entry in _active_artillery_strikes:
+		var node: Variant = entry.get("node", null)
+		if typeof(node) != TYPE_OBJECT or not is_instance_valid(node) or not (node is Node3D):
+			continue
+		var elapsed: float = float(entry.get("elapsed", 0.0)) + delta
+		var duration: float = maxf(0.2, float(entry.get("duration", 2.0)))
+		entry["elapsed"] = elapsed
+		var strike_pos: Vector3 = entry.get("pos", Vector3.ZERO)
+		var strike_rad: float = float(entry.get("radius", 5.5))
+		if elapsed >= duration:
+			var dmg: int = int(entry.get("damage", 420))
+			var wdmg: int = int(entry.get("wall_damage", 500))
+			for eu in _get_living_enemies():
+				var e := eu as CombatUnitScript
+				if e != null and Vector2(e.position.x, e.position.z).distance_to(Vector2(strike_pos.x, strike_pos.z)) <= strike_rad:
+					e.take_damage(dmg, self)
+					if feel_manager != null:
+						feel_manager.trigger_unit_hit_flash(e)
+			if current_room_info != null and wdmg > 0:
+				var all_walls: Array = current_room_info.get_all_battlefield_walls() if current_room_info.has_method(&"get_all_battlefield_walls") else current_room_info.get_wall_obstacles()
+				for wall in all_walls:
+					if wall != null and is_instance_valid(wall) and not wall.is_destroyed and wall.intersects_point_xz(strike_pos, strike_rad):
+						var was_intact: bool = not wall.is_destroyed
+						wall.take_structural_damage(wdmg, 2)
+						if was_intact and wall.is_destroyed:
+							breached_any = true
+			if feel_manager != null:
+				feel_manager.spawn_explosion_burst(strike_pos, strike_rad, Color(0.25, 0.92, 1.0), 0.42)
+				feel_manager.trigger_feedback("LARGE", strike_pos, camera_rig)
+				feel_manager.play_sfx("explosion", -4.0)
+			if health_bar_overlay != null:
+				health_bar_overlay.spawn_floating_text(strike_pos + Vector3(0.0, 1.4, 0.0), "💥 PHÁO KÍCH CHI VIỆN!", Color(0.32, 0.95, 1.0), true)
+			var disc := node as Node
+			if disc.get_parent() != null:
+				disc.get_parent().remove_child(disc)
+			disc.free()
+		else:
+			proxy_factory.update_aoe_progress(node as Node3D, clampf(elapsed / duration, 0.0, 1.0))
+			remaining.append(entry)
+	_active_artillery_strikes = remaining
+	if breached_any:
+		_invalidate_ai_cache()
+		_invalidate_nav_paths()
+		if encounter_zone_manager != null and projectile_manager != null:
+			projectile_manager.set_wall_obstacles(encounter_zone_manager.get_all_wall_obstacles())
+
 func _resolve_random_event(evt: Dictionary) -> void:
 	var etype: String = str(evt.get("type", ""))
-	_update_status_banner("RANDOM EVENT: %s!" % etype)
+	if etype.is_empty():
+		return
+	run_events_triggered.append(etype)
+	var cur_idx: int = room_manager.get_current_room_index() if room_manager != null else 0
+	var cur_diff: int = maxi(1, int(active_run_config.get("difficulty", 1)))
+	var base_origin: Vector3 = encounter_zone_manager.get_sector_origin(cur_idx) if (seamless_mode and encounter_zone_manager != null) else Vector3.ZERO
+
 	if etype == "ALLY_ARTILLERY":
-		for enemy in _get_living_enemies():
-			(enemy as CombatUnitScript).take_damage(250, self)
+		var living := _get_living_enemies()
+		var strike_pos: Vector3 = base_origin + Vector3(0.0, 0.0, -6.0)
+		if not living.is_empty():
+			var sample_count: int = mini(3, living.size())
+			var acc := Vector3.ZERO
+			for k in range(sample_count):
+				acc += (living[k] as CombatUnitScript).position
+			strike_pos = acc / float(sample_count)
+		var disc := Node3D.new()
+		disc.name = "AllyArtilleryStrike"
+		disc.position = Vector3(strike_pos.x, 0.0, strike_pos.z)
+		proxy_factory.attach_aoe_visuals(disc, 5.5, Color(0.18, 0.88, 1.0))
+		if effects_container != null:
+			effects_container.add_child(disc)
+		else:
+			add_child(disc)
+		_active_artillery_strikes.append({
+			"node": disc,
+			"pos": disc.position,
+			"radius": 5.5,
+			"elapsed": 0.0,
+			"duration": 2.0,
+			"damage": 420,
+			"wall_damage": 500,
+		})
+		_update_status_banner("🎯 PHÁO KÍCH ĐỒNG MINH! Khai hỏa sau 2 giây!")
+		if health_bar_overlay != null:
+			health_bar_overlay.spawn_floating_text(disc.position + Vector3(0.0, 1.2, 0.0), "🎯 PHÁO KÍCH (2.0s)", Color(0.25, 0.92, 1.0), true)
+		if feel_manager != null:
+			feel_manager.play_sfx("alert", -6.0)
+	elif etype == "HIDDEN_BOSS":
+		var hb := EnemyUnitScript.new()
+		hb.name = "HiddenRaiderBoss_%d" % (enemy_units.size() + 1)
+		hb.enemy_type = "HIDDEN_BOSS"
+		hb.weapon_class = "SG"
+		hb.behavior = "AGGRESSIVE"
+		hb.is_alerted = true
+		hb.facing_dir = Vector3(0.0, 0.0, 1.0)
+		hb.max_hp = 1800 + cur_diff * 350
+		hb.current_hp = hb.max_hp
+		hb.atk = 135 + cur_diff * 20
+		hb.def = 65
+		hb.speed = 3.9
+		hb.attack_range = 10.5
+		hb.attack_cooldown = 1.4
+		hb.projectile_speed = 24.0
+		hb.frontal_shield_ratio = 0.35
+		hb.penetration_power = 1
+		hb.wall_damage = 65
+		hb.detection_radius = 32.0
+		hb.loot_table = _build_enemy_loot_table("HIDDEN_BOSS", "EVENT")
+		hb.position = _find_safe_event_spawn_pos(base_origin + Vector3(0.0, 0.0, -9.0))
+		hb.patrol_origin = hb.position
+		proxy_factory.attach_unit_visuals(hb, "HIDDEN BOSS", Color(0.85, 0.25, 0.65), Color(1.0, 0.72, 0.2), 1.35, hb.attack_range)
+		proxy_factory.attach_front_shield_visual(hb, 1.35, hb.facing_dir)
+		proxy_factory.update_unit_hp_label(hb, "HIDDEN BOSS", hb.current_hp, hb.max_hp, true)
+		_bind_unit_hp_feedback(hb)
+		hb.unit_died.connect(_on_enemy_died)
+		if enemies_container != null:
+			enemies_container.add_child(hb)
+		enemy_units.append(hb)
+		if wave_spawner != null:
+			wave_spawner.add_enemies(1)
+		_update_status_banner("⚠️ SỰ KIỆN: BOSS ẨN ĐỘT KÍCH!")
+		if feel_manager != null:
+			feel_manager.trigger_feedback("LARGE", hb.position, camera_rig)
+			feel_manager.play_sfx("alert", -4.0)
+		if health_bar_overlay != null:
+			health_bar_overlay.spawn_floating_text(hb.position + Vector3(0.0, 1.7, 0.0), "⚠️ BOSS ẨN ĐỘT KÍCH!", Color(1.0, 0.4, 0.85), true)
 	elif etype == "THIRD_PARTY":
-		for unit in _get_living_strikers():
-			(unit as CombatUnitScript).heal(120)
+		var offsets: Array[float] = [-5.5, 5.5]
+		var tp_origin := base_origin
+		for i in range(offsets.size()):
+			var tp := EnemyUnitScript.new()
+			tp.name = "RogueMerc_%d_%d" % [enemy_units.size() + 1, i + 1]
+			tp.enemy_type = "THIRD_PARTY"
+			tp.weapon_class = "AR"
+			tp.behavior = "AGGRESSIVE"
+			tp.is_alerted = true
+			tp.facing_dir = Vector3(0.0, 0.0, 1.0)
+			tp.max_hp = 680 + cur_diff * 120
+			tp.current_hp = tp.max_hp
+			tp.atk = 95 + cur_diff * 12
+			tp.def = 35
+			tp.speed = 4.2
+			tp.attack_range = 11.5
+			tp.attack_cooldown = ENEMY_ATTACK_COOLDOWN
+			tp.projectile_speed = 22.0
+			tp.detection_radius = 28.0
+			tp.loot_table = _build_enemy_loot_table("THIRD_PARTY", "EVENT")
+			tp.position = _find_safe_event_spawn_pos(base_origin + Vector3(offsets[i], 0.0, -4.0))
+			tp.patrol_origin = tp.position
+			tp_origin = tp.position
+			proxy_factory.attach_unit_visuals(tp, "PHE THỨ 3", Color(0.95, 0.65, 0.15), Color(1.0, 0.85, 0.25), 0.98, tp.attack_range)
+			proxy_factory.update_unit_hp_label(tp, "PHE THỨ 3", tp.current_hp, tp.max_hp, true)
+			_bind_unit_hp_feedback(tp)
+			tp.unit_died.connect(_on_enemy_died)
+			if enemies_container != null:
+				enemies_container.add_child(tp)
+			enemy_units.append(tp)
+			_third_party_units.append(tp)
+		if wave_spawner != null:
+			wave_spawner.add_enemies(offsets.size())
+		_update_status_banner("⚔️ SỰ KIỆN: THẾ LỰC THỨ 3 CAN THIỆP!")
+		if feel_manager != null:
+			feel_manager.trigger_feedback("MEDIUM", tp_origin, camera_rig)
+			feel_manager.play_sfx("alert", -5.0)
 
 func _find_caster_striker(caster_id: String) -> CombatUnitScript:
 	if caster_id.is_empty():
@@ -2622,7 +3203,7 @@ func _recenter_camera_on_squad() -> void:
 
 func _clear_enemies() -> void:
 	for e in enemy_units:
-		if e != null and is_instance_valid(e):
+		if typeof(e) == TYPE_OBJECT and is_instance_valid(e):
 			var uid: int = e.get_instance_id()
 			_unit_last_hp_state.erase(uid)
 			_unit_last_status_tag.erase(uid)
@@ -2632,15 +3213,17 @@ func _clear_enemies() -> void:
 				e.get_parent().remove_child(e)
 			e.free()
 	enemy_units.clear()
+	_third_party_units.clear()
 
 func _clear_active_aoes() -> void:
 	var had_aoes: bool = not active_aoes.is_empty()
 	for aoe in active_aoes:
-		if aoe != null and is_instance_valid(aoe):
+		if typeof(aoe) == TYPE_OBJECT and is_instance_valid(aoe):
 			if aoe.get_parent() != null:
 				aoe.get_parent().remove_child(aoe)
 			aoe.free()
 	active_aoes.clear()
+	_clear_artillery_strikes()
 	if had_aoes:
 		_invalidate_ai_cache()
 
@@ -2669,8 +3252,10 @@ func _on_restart_pressed() -> void:
 
 func _on_return_hub_pressed() -> void:
 	var ztm := get_node_or_null("/root/ZoneTransitionManager")
+	var target_scene: String = str(active_run_config.get("return_scene", "res://scenes/hub/zones/schale_building.tscn"))
+	var target_spawn: String = str(active_run_config.get("return_spawn", "office_desk"))
 	if ztm != null and ztm.has_method(&"transition_to"):
-		ztm.transition_to("res://scenes/hub/zones/schale_building.tscn", "default")
+		ztm.transition_to(target_scene, target_spawn)
 
 func _connect_signals() -> void:
 	if room_manager != null:

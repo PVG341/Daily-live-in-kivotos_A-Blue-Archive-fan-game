@@ -248,6 +248,21 @@ Trước khi chuyển sang Phase 5, toàn bộ 60 scripts GDScript và 22 bộ t
   * Gọi `feel_manager.clear_effects()` trước `_clear_enemies()` trong `_on_room_loaded()`.
   * Bổ sung kiểm thử hồi quy `# 5d.` trong `tests/test_combat_arena_flow.gd` (xác nhận an toàn khi node có hit-flash bị `free()` ngay lập tức); chạy lại toàn bộ **25/25 suite headless pass** (không phát sinh `SCRIPT ERROR`, `OBJECT_ORPHAN_NODE_COUNT == 0`) và smoke-test `scenes/combat/combat_arena.tscn --quit-after 60` sạch `0` lỗi.
 
+---
+
+## 14. Giai đoạn 3A — Cầu nối Xuất kích Hub ↔ Combat, Trả thưởng Loot/Save & Sự kiện Ngẫu nhiên Thực chiến
+
+* **Cầu nối Xuất kích Hub $\leftrightarrow$ Phó bản (`SortieDispatchService.gd`, `MissionTerminal.gd`, `PhoneOSManager.gd`, `HubSceneController.gd`, `ZoneTransitionManager.gd`):**
+  * Tự động gắn **`MissionTerminal`** lên bàn làm việc `SenseiDesk` tại Tòa nhà Schale (`schale_building.tscn`, `schale_office.tscn`) mà không chỉnh sửa trực tiếp file scene; bấm `[E]` mở tab `MISSIONS` trên MomoTalk OS (`phone_os.tscn`).
+  * `SortieDispatchService` quản lý danh mục 3 nhiệm vụ (`Tuần tra Schale` 20 AP, `Quét sạch Kivotos` 30 AP, `Tổng lực Abyss` 40 AP), cho phép chọn Challenge Modifiers (`ENEMY_SPEED_UP`, `NO_REST_ROOMS`, `DOUBLE_BOSS_PHASE`), chọn tối đa 4 Striker + 2 Special (tự động gộp học viên từ `ModLoader`), kiểm tra/trừ AP qua `DayCycleManager` và bàn giao cấu hình qua `ZoneTransitionManager.pending_combat_config`.
+* **Thực thi Chiến dịch, Loot, Tiến trình & Sự kiện Ngẫu nhiên (`CombatArenaController.gd`, `SaveManager.gd`, `WaveSpawner.gd`, `DungeonLayoutGenerator.gd`, `ChibiProxyFactory.gd`):**
+  * `CombatArenaController` đọc `pending_combat_config`, triển khai đúng đội hình (bao gồm học viên mod), áp dụng Challenge Modifiers (`NO_REST_ROOMS`, địch tăng tốc `1.25x`, Boss tăng 20% HP và đánh 2 vòng AoE đồng thời ở Phase $\ge 2$) và buff Bond vĩnh viễn giới hạn `+10%`.
+  * Kích hoạt trực quan 3 sự kiện ngẫu nhiên (`CombatEventManager`): **`ALLY_ARTILLERY`** (vòng cảnh báo xanh cyan 2 giây nổ gây 420 sát thương địch & 500 sát thương tường), **`HIDDEN_BOSS`** (đột kích kèm vật phẩm hiếm), và **`THIRD_PARTY`** (phe thứ 3 giao chiến chéo với cả Striker lẫn địch thường).
+  * Thu thập `EnemyUnit.dropped_loot`, cộng Credits theo hệ số Challenge Modifiers, tự động hoàn thành Quest chiến đấu & mở khóa thẻ Roguelike vào `SaveManager` (idempotent, tự đồng bộ lên tab `INVENTORY` của `PhoneOS` và hiển thị chi tiết trên `ResultPanel`).
+* **Kiểm thử Xác minh:** Bổ sung bộ test end-to-end `tests/test_phase3a_sortie_loop.gd`; toàn bộ **26/26 suite headless pass** (`0` `SCRIPT ERROR`, `OBJECT_ORPHAN_NODE_COUNT == 0`) và smoke-test cả `combat_arena.tscn` lẫn `schale_building.tscn` sạch lỗi.
+* **Backlog Hậu kỳ (sau Phase 4 / Phase 5):** Triển khai các **Phòng Boss Đặc biệt (Total Assault: Binah, Hod, ...)** trên trường `mode: "RAID_BOSS"` đã chừa sẵn trong `SortieDispatchService.MISSION_CATALOG`.
+
+
 
 
 
